@@ -1,0 +1,49 @@
+customer_id,first_name,last_name,email,phone,address,city,country,created_ts
+CRM1001,John,Doe,john.doe@example.com,9876543210,123 Main St,Bangalore,India,2026-02-01   <-------------------- original
+CRM1006,John,Doe,john.doe@example.com,9876543210,123 Main St,Bangalore,India,2026-02-06   <------------ duplicate
+CRM1010,John,Doe,john.doe@example.com,9876543210,123 Main St,Bangalore,India,2026-02-10   <------------ duplicate
+CRM1015,John,Doe,john.doe@example.com,9876543210,123 Main St,Bangalore,India,2026-02-15   <------------ duplicate
+
+CRM1002,Jane,Smith,jane.smith@example.com,9876543211,456 Oak Ave,Mumbai,India,2026-02-02   <-------------------- original
+CRM1007,Jane,Smith,jane.smith@example.com,9876543211,456 Oak Ave,Mumbai,India,2026-02-07   <------------ duplicate
+CRM1012,Jane,Smith,jane.smith@example.com,9876543211,456 Oak Ave,Mumbai,India,2026-02-12   <------------ duplicate
+
+CRM1003,Jon,Do,jon.do@example.com,9876543210,123 Main St,Bangalore,India,2026-02-03   <-------------------- original
+CRM1013,Jon,Do,jon.do@example.com,9876543210,123 Main St,Bangalore,India,2026-02-13   <------------ duplicate
+
+CRM1004,Rahul,Sharma,rahul.sharma@example.com,9876543212,789 Pine Rd,Delhi,India,2026-02-04   <-------------------- original
+CRM1008,Rahul,Sharma,rahul.sharma@example.com,9876543212,789 Pine Rd,Delhi,India,2026-02-08   <------------ duplicate
+CRM1014,Rahul,Sharma,rahul.sharma@example.com,9876543212,789 Pine Rd,Delhi,India,2026-02-14   <------------ duplicate
+
+CRM1005,Amit,Verma,amit.verma@example.com,9876543213,101 Maple Blvd,Pune,India,2026-02-05   <-------------------- original
+CRM1009,Amit,Verma,amit.verma@example.com,9876543213,101 Maple Blvd,Pune,India,2026-02-09   <------------ duplicate
+CRM1011,Amit,Verma,amit.verma@example.com,9876543213,101 Maple Blvd,Pune,India,2026-02-11   <------------ duplicate
+CRM1016,Amit,Verma,amit.verma@example.com,9876543213,101 Maple Blvd,Pune,India,2026-02-16   <------------ duplicate
+
+CRM1017,John,Doe,john.doe@example.com,9876543210,123 Main St,Bangalore,India,2026-02-17   <------------ duplicate
+CRM1018,Jane,Smith,jane.smith@example.com,9876543211,456 Oak Ave,Mumbai,India,2026-02-17   <------------ duplicate
+CRM1019,Rahul,Sharma,rahul.sharma@example.com,9876543212,789 Pine Rd,Delhi,India,2026-02-17   <------------ duplicate
+CRM1020,Amit,Verma,amit.verma@example.com,9876543213,101 Maple Blvd,Pune,India,2026-02-17   <------------ duplicate
+
+CRM1021,John,Doe,john.doe@example.com,9876543210,123 Main St,Bangalore,India,2026-02-18   <------------ duplicate
+CRM1022,Jane,Smith,jane.smith@example.com,9876543211,456 Oak Ave,Mumbai,India,2026-02-18   <------------ duplicate
+
+CRM1023,John,Doe,john.doe@example.com,9876543210,123 Main St,Bangalore,India,2026-02-19   <------------ duplicate
+CRM1024,Jane,Smith,jane.smith@example.com,9876543211,456 Oak Ave,Mumbai,India,2026-02-19   <------------ duplicate
+
+CRM1025,Neha,Gupta,neha.gupta@example.com,9876543214,55 Cedar St,Jaipur,India,2026-02-20   <-------------------- original
+CRM1026,Arjun,Patel,arjun.patel@example.com,9876543215,44 Palm Rd,Ahmedabad,India,2026-02-20   <-------------------- original
+
+CRM1027,John,Doe,john.doe@example.com,9876543210,123 Main St,Bangalore,India,2026-02-20   <------------ duplicate
+CRM1028,Jane,Smith,jane.smith@example.com,9876543211,456 Oak Ave,Mumbai,India,2026-02-20   <------------ duplicate
+CRM1029,Rahul,Sharma,rahul.sharma@example.com,9876543212,789 Pine Rd,Delhi,India,2026-02-20   <------------ duplicate
+CRM1030,Amit,Verma,amit.verma@example.com,9876543213,101 Maple Blvd,Pune,India,2026-02-20   <------------ duplicate
+
+CRM1031,John,Doe,john.doe@example.com,9876543210,123 Main St,Bangalore,India,2026-02-21   <------------ duplicate
+CRM1032,Neha,Gupta,neha.gupta@example.com,9876543214,55 Cedar St,Jaipur,India,2026-02-21   <------------ duplicate
+
+CRM1033,John,Doe,john.doe@example.com,9876543210,123 Main St,Bangalore,India,2026-02-22   <------------ duplicate
+CRM1034,Neha,Gupta,neha.gupta@example.com,9876543214,55 Cedar St,Jaipur,India,2026-02-22   <------------ duplicate
+
+CRM1035,John,Doe,john.doe@example.com,9876543210,123 Main St,Bangalore,India,2026-02-23
+CRM1036,Neha,Gupta,neha.gupta@example.com,9876543214,55 Cedar St,Jaipur,India,2026-02-23

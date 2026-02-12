@@ -1,0 +1,15 @@
+{
+  "raw_crm": "storage/raw/crm/customer",
+  "raw_erp": "storage/raw/erp/customer",
+  "raw_salesforce": "storage/raw/salesforce/customer",
+  "raw_sap": "storage/raw/sap/customer",
+  "bronze_main": "storage/bronze/main",
+  "bronze_conflicted": "storage/bronze/conflicted",
+  "silver_base": "storage/silver/base",
+  "silver_conflicted": "storage/silver/conflicted",
+  "gold_customer": "storage/gold/customer",
+  "audit_runs": "storage/audit/audit_runs",
+  "audit_errors": "storage/audit/audit_errors",
+  "audit_lineage": "storage/audit/audit_lineage",
+  "checkpoints": "storage/checkpoints"
+}

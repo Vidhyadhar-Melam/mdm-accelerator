@@ -1,0 +1,43 @@
+customer_id,first_name,last_name,email,phone,address,city,country,created_ts
+SF3001,Arjun,Reddy,arjun.reddy@example.com,9234567890,11 Green St,Hyderabad,India,2026-02-01   <-------------------- original
+SF3006,Arjun,Reddy,arjun.reddy@example.com,9234567890,11 Green St,Hyderabad,India,2026-02-06   <------------ duplicate
+SF3010,Arjun,Reddy,arjun.reddy@example.com,9234567890,11 Green St,Hyderabad,India,2026-02-10   <------------ duplicate
+SF3015,Arjun,Reddy,arjun.reddy@example.com,9234567890,11 Green St,Hyderabad,India,2026-02-15   <------------ duplicate
+
+SF3002,Priya,Nair,priya.nair@example.com,9234567891,66 Blue Rd,Kochi,India,2026-02-02   <-------------------- original
+SF3007,Priya,Nair,priya.nair@example.com,9234567891,66 Blue Rd,Kochi,India,2026-02-07   <------------ duplicate
+SF3012,Priya,Nair,priya.nair@example.com,9234567891,66 Blue Rd,Kochi,India,2026-02-12   <------------ duplicate
+
+SF3003,Vikram,Desai,vikram.desai@example.com,9234567892,33 Silver St,Surat,India,2026-02-03   <-------------------- original
+SF3013,Vikram,Desai,vikram.desai@example.com,9234567892,33 Silver St,Surat,India,2026-02-13   <------------ duplicate
+
+SF3004,Leela,Rao,leela.rao@example.com,9234567893,99 Pearl Rd,Goa,India,2026-02-04   <-------------------- original
+SF3008,Leela,Rao,leela.rao@example.com,9234567893,99 Pearl Rd,Goa,India,2026-02-08   <------------ duplicate
+SF3014,Leela,Rao,leela.rao@example.com,9234567893,99 Pearl Rd,Goa,India,2026-02-14   <------------ duplicate
+
+SF3005,Rohan,Mehta,rohan.mehta@example.com,9234567894,77 Lotus Rd,Delhi,India,2026-02-05   <-------------------- original
+SF3009,Rohan,Mehta,rohan.mehta@example.com,9234567894,77 Lotus Rd,Delhi,India,2026-02-09   <------------ duplicate
+SF3011,Rohan,Mehta,rohan.mehta@example.com,9234567894,77 Lotus Rd,Delhi,India,2026-02-11   <------------ duplicate
+SF3016,Rohan,Mehta,rohan.mehta@example.com,9234567894,77 Lotus Rd,Delhi,India,2026-02-16   <------------ duplicate
+
+SF3017,Arjun,Reddy,arjun.reddy@example.com,9234567890,11 Green St,Hyderabad,India,2026-02-17   <------------ duplicate
+SF3018,Priya,Nair,priya.nair@example.com,9234567891,66 Blue Rd,Kochi,India,2026-02-17   <------------ duplicate
+SF3019,Leela,Rao,leela.rao@example.com,9234567893,99 Pearl Rd,Goa,India,2026-02-17   <------------ duplicate
+SF3020,Rohan,Mehta,rohan.mehta@example.com,9234567894,77 Lotus Rd,Delhi,India,2026-02-17   <------------ duplicate
+
+SF3025,Neha,Gupta,neha.gupta@example.com,9234567895,55 Cedar St,Jaipur,India,2026-02-20   <-------------------- original
+SF3026,Arjun,Patel,arjun.patel@example.com,9234567896,44 Palm Rd,Ahmedabad,India,2026-02-20   <-------------------- original
+
+SF3027,Arjun,Reddy,arjun.reddy@example.com,9234567890,11 Green St,Hyderabad,India,2026-02-20   <------------ duplicate
+SF3028,Priya,Nair,priya.nair@example.com,9234567891,66 Blue Rd,Kochi,India,2026-02-20   <------------ duplicate
+SF3029,Leela,Rao,leela.rao@example.com,9234567893,99 Pearl Rd,Goa,India,2026-02-20   <------------ duplicate
+SF3030,Rohan,Mehta,rohan.mehta@example.com,9234567894,77 Lotus Rd,Delhi,India,2026-02-20   <------------ duplicate
+
+SF3031,Arjun,Reddy,arjun.reddy@example.com,9234567890,11 Green St,Hyderabad,India,2026-02-21   <------------ duplicate
+SF3032,Neha,Gupta,neha.gupta@example.com,9234567895,55 Cedar St,Jaipur,India,2026-02-21   <------------ duplicate
+
+SF3033,Arjun,Reddy,arjun.reddy@example.com,9234567890,11 Green St,Hyderabad,India,2026-02-22   <------------ duplicate
+SF3034,Neha,Gupta,neha.gupta@example.com,9234567895,55 Cedar St,Jaipur,India,2026-02-22   <------------ duplicate
+
+SF3035,Arjun,Reddy,arjun.reddy@example.com,9234567890,11 Green St,Hyderabad,India,2026-02-23   <------------ duplicate
+SF3036,Neha,Gupta,neha.gupta@example.com,9234567895,55 Cedar St,Jaipur,India,2026-02-23   <------------ duplicate

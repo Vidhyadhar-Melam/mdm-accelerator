@@ -1,0 +1,5 @@
+{
+    "environment": "local",
+    "local_root": "storage",
+    "databricks_root": "/mnt"
+}

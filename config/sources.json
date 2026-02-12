@@ -1,0 +1,46 @@
+{
+    "sources": [
+        {
+            "name": "CRM",
+            "path": "data/source/crm/crm_customer.csv",
+            "dedupe_keys": [
+                "email",
+                "phone"
+            ],
+            "sensitive_fields": [
+                "email",
+                "phone"
+            ]
+        },
+        {
+            "name": "ERP",
+            "path": "data/source/erp/erp_customer.csv",
+            "dedupe_keys": [
+                "customer_id"
+            ],
+            "sensitive_fields": [
+                "customer_id"
+            ]
+        },
+        {
+            "name": "Salesforce",
+            "path": "data/source/salesforce/salesforce_customer.csv",
+            "dedupe_keys": [
+                "email"
+            ],
+            "sensitive_fields": [
+                "email"
+            ]
+        },
+        {
+            "name": "SAP",
+            "path": "data/source/sap/sap_customer.csv",
+            "dedupe_keys": [
+                "customer_id"
+            ],
+            "sensitive_fields": [
+                "customer_id"
+            ]
+        }
+    ]
+}
