@@ -10,6 +10,7 @@ Objective:
     4. Log audit trail for traceability.
     5. Handle errors gracefully and continue processing other sources.
     6. Support both batch and streaming modes with checkpoints.
+    7. Integrate Delta Time Travel (version/timestamp queries).
 """
 
 import json, uuid, logging, argparse
@@ -96,10 +97,14 @@ def dedupe_source_batch(src, run_id):
         clean_count, conflicted_count = deduped.count(), conflicted.count()
         logger.info(f"[BATCH] {src['name']} deduplication complete. Clean={clean_count}, Conflicted={conflicted_count}")
 
-        # ✅ 3.2 Audit Lineage Logging
+        # ✅ Capture Delta version for time travel
+        bronze_version = spark.sql(f"DESCRIBE HISTORY delta.`{str(main_path)}`").first().version
+
+        # ✅ Audit Lineage Logging with version
         lineage_data = [(run_id, src["name"], datetime.now(), initial_count,
-                         clean_count, conflicted_count, env["environment"])]
-        lineage_columns = ["run_id","source","lineage_time","raw_count","clean_count","conflicted_count","environment"]
+                         clean_count, conflicted_count, env["environment"], bronze_version)]
+        lineage_columns = ["run_id","source","lineage_time","raw_count","clean_count",
+                           "conflicted_count","environment","bronze_version"]
 
         lineage_df = spark.createDataFrame(lineage_data, lineage_columns)
         lineage_path = PROJECT_ROOT / paths["audit_lineage"]
@@ -110,7 +115,7 @@ def dedupe_source_batch(src, run_id):
     except Exception as e:
         logger.error(f"[BATCH] Deduplication failed for {src['name']}", exc_info=True)
 
-        # ✅ 3.1 Audit Errors Logging
+        # ✅ Audit Errors Logging
         error_data = [(str(uuid.uuid4()), "Deduplication", datetime.now(),
                        src["name"], str(e), env["environment"])]
         error_columns = ["error_id","job_name","error_time","source","error_message","environment"]
@@ -132,7 +137,6 @@ def dedupe_source_streaming(src):
         df_stream = spark.readStream.format("delta").load(str(raw_path))
         keys = src["dedupe_keys"]
 
-        # ✅ FIX: Add ingestion_date before writing
         if "ingestion_ts" in df_stream.columns:
             df_stream = df_stream.withColumn("ingestion_date", to_date(col("ingestion_ts")))
 
@@ -151,6 +155,17 @@ def dedupe_source_streaming(src):
         logger.info(f"[STREAMING] {src['name']} streaming deduplication started.")
     except Exception as e:
         logger.error(f"[STREAMING] Deduplication failed for {src['name']}", exc_info=True)
+
+# -------------------------------------------------------------
+# Helper Function: Time Travel Reads
+# -------------------------------------------------------------
+def read_delta_time_travel(path, version=None, timestamp=None):
+    reader = spark.read.format("delta")
+    if version is not None:
+        reader = reader.option("versionAsOf", version)
+    if timestamp is not None:
+        reader = reader.option("timestampAsOf", timestamp)
+    return reader.load(str(path))
 
 # -------------------------------------------------------------
 # Main Job with Audit Logging

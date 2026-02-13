@@ -2806,3 +2806,17 @@ pyspark.errors.exceptions.captured.AnalysisException: [PATH_NOT_FOUND] Path does
 2026-02-12 18:07:44,365 [INFO] [BATCH] SAP deduplication complete. Clean=49, Conflicted=136
 2026-02-12 18:07:59,645 [INFO] Deduplication complete. Run ID=210eadb4-6085-4265-9fa6-b22b0dcf6fde, Clean=122, Conflicted=637, Duration=128.25s
 2026-02-12 18:08:02,727 [INFO] Closing down clientserver connection
+2026-02-13 11:16:19,048 [INFO] [BATCH] Reading raw path: C:\Users\viddi\Desktop\CoE\mdm-accelerator\storage\raw\CRM\customer
+2026-02-13 11:16:57,902 [INFO] [BATCH] Initial row count for CRM: 204
+2026-02-13 11:17:30,871 [INFO] [BATCH] CRM deduplication complete. Clean=7, Conflicted=197
+2026-02-13 11:17:46,451 [INFO] [BATCH] Reading raw path: C:\Users\viddi\Desktop\CoE\mdm-accelerator\storage\raw\ERP\customer
+2026-02-13 11:17:49,858 [INFO] [BATCH] Initial row count for ERP: 185
+2026-02-13 11:18:04,959 [INFO] [BATCH] ERP deduplication complete. Clean=49, Conflicted=136
+2026-02-13 11:18:16,292 [INFO] [BATCH] Reading raw path: C:\Users\viddi\Desktop\CoE\mdm-accelerator\storage\raw\Salesforce\customer
+2026-02-13 11:18:21,211 [INFO] [BATCH] Initial row count for Salesforce: 185
+2026-02-13 11:18:37,305 [INFO] [BATCH] Salesforce deduplication complete. Clean=17, Conflicted=168
+2026-02-13 11:18:47,352 [INFO] [BATCH] Reading raw path: C:\Users\viddi\Desktop\CoE\mdm-accelerator\storage\raw\SAP\customer
+2026-02-13 11:18:51,185 [INFO] [BATCH] Initial row count for SAP: 185
+2026-02-13 11:19:18,443 [INFO] [BATCH] SAP deduplication complete. Clean=49, Conflicted=136
+2026-02-13 11:19:37,456 [INFO] Deduplication complete. Run ID=fbad464d-0a7b-4f30-aae5-11cfcd863210, Clean=122, Conflicted=637, Duration=189.04s
+2026-02-13 11:19:44,493 [INFO] Closing down clientserver connection
