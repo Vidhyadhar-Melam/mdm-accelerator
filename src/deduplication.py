@@ -8,7 +8,7 @@ Objective:
        - main = clean (rank=1)
        - conflicted = duplicates (rank>1) [batch only]
     4. Log audit trail for traceability.
-    5. Handle errors gracefully and continue processing other sources.
+    5. Handle errors and continue processing other sources.
     6. Support both batch and streaming modes with checkpoints.
     7. Integrate Delta Time Travel (version/timestamp queries).
 """
@@ -97,10 +97,10 @@ def dedupe_source_batch(src, run_id):
         clean_count, conflicted_count = deduped.count(), conflicted.count()
         logger.info(f"[BATCH] {src['name']} deduplication complete. Clean={clean_count}, Conflicted={conflicted_count}")
 
-        # ✅ Capture Delta version for time travel
+        # Capture Delta version for time travel
         bronze_version = spark.sql(f"DESCRIBE HISTORY delta.`{str(main_path)}`").first().version
 
-        # ✅ Audit Lineage Logging with version
+        # Audit Lineage Logging with version
         lineage_data = [(run_id, src["name"], datetime.now(), initial_count,
                          clean_count, conflicted_count, env["environment"], bronze_version)]
         lineage_columns = ["run_id","source","lineage_time","raw_count","clean_count",
@@ -115,7 +115,7 @@ def dedupe_source_batch(src, run_id):
     except Exception as e:
         logger.error(f"[BATCH] Deduplication failed for {src['name']}", exc_info=True)
 
-        # ✅ Audit Errors Logging
+        # Audit Errors Logging
         error_data = [(str(uuid.uuid4()), "Deduplication", datetime.now(),
                        src["name"], str(e), env["environment"])]
         error_columns = ["error_id","job_name","error_time","source","error_message","environment"]

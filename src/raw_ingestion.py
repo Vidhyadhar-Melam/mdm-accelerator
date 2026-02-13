@@ -1,3 +1,19 @@
+# Raw Ingestion Script (Config-Driven, Delta Lake)
+# --------------------------------------------------------
+# Objectives:
+#   1. Read source system files (CSV) defined in config (CRM, ERP, Salesforce, SAP).
+#   2. Standardize column names across systems (e.g., email, phone, customer_id).
+#   3. Add metadata fields for traceability:
+#        - source_system (origin of data)
+#        - ingestion_ts (timestamp of ingestion)
+#        - run_id (unique identifier per run)
+#   4. Write ingested data into Raw Layer (Delta tables) under storage/raw/<source>/customer.
+#   5. Ensure resilience with try/except error handling so one failing source does not block others.
+#   6. Log ingestion runs into audit_runs table with run metadata (start/end time, duration, counts).
+#   7. Provide validation by printing audit schema and sample records after each run.
+#   8. Establish a consistent, traceable Raw Layer foundation for downstream deduplication and MDM processing.
+
+
 import json
 import uuid
 from pathlib import Path
@@ -45,7 +61,7 @@ def ingest_source(src, run_id):
         # Read CSV
         df = spark.read.option("header", "true").csv(str(PROJECT_ROOT / src["path"]))
 
-        # 🔄 Standardize column names
+        # Standardize column names
         for col_name in df.columns:
             lower = col_name.lower()
             if lower in ["cust_email", "sf_email", "erp_email", "sap_email", "email"]:
