@@ -1,0 +1,159 @@
+# Raw Ingestion Script (Databricks, Config-Driven, Delta Lake, Cloud-Native)
+
+import json, uuid
+from datetime import datetime
+from pyspark.sql.functions import lit, current_timestamp
+from pyspark.sql.types import StructType, StructField, StringType, DoubleType, TimestampType, LongType
+
+# -------------------------------------------------------------
+# Load configs directly from S3 using dbutils.fs.head
+# -------------------------------------------------------------
+sources_path = "s3://databricks-amz-s3-bucket/mdm-accelerator/config/sources.json"
+paths_path   = "s3://databricks-amz-s3-bucket/mdm-accelerator/config/paths.json"
+env_path     = "s3://databricks-amz-s3-bucket/mdm-accelerator/config/environment.json"
+
+sources = json.loads(dbutils.fs.head(sources_path, 100000))["sources"]
+paths   = json.loads(dbutils.fs.head(paths_path, 100000))
+env     = json.loads(dbutils.fs.head(env_path, 100000))
+
+# -------------------------------------------------------------
+# Helper: Ingest a source system
+# -------------------------------------------------------------
+def ingest_source(src, run_id, error_records, lineage_records):
+    try:
+        start_time = datetime.now()
+
+        # ✅ Read CSV directly from S3
+        df = spark.read.option("header", "true") \
+                       .option("inferSchema", "true") \
+                       .option("delimiter", ",") \
+                       .csv(src["path"])
+
+        # Standardize column names
+        for col_name in df.columns:
+            lower = col_name.lower()
+            if lower in ["cust_email","sf_email","erp_email","sap_email","email"]:
+                df = df.withColumnRenamed(col_name,"email")
+            if lower in ["cust_phone","phone_number","contact_phone","phone"]:
+                df = df.withColumnRenamed(col_name,"phone")
+            if lower in ["id","cust_id","customerid","customer_id"]:
+                df = df.withColumnRenamed(col_name,"customer_id")
+
+        # Add metadata
+        df = (df.withColumn("source_system", lit(src["name"]))
+                .withColumn("ingestion_ts", current_timestamp())
+                .withColumn("run_id", lit(run_id)))
+
+        # ✅ Write to raw layer in S3 using entity
+        raw_path = f"s3://databricks-amz-s3-bucket/mdm-accelerator/storage/raw/{src['name'].lower()}/{src['entity'].lower()}"
+        df.write.format("delta").mode("overwrite").save(raw_path)
+
+        end_time = datetime.now()
+        duration = (end_time - start_time).total_seconds()
+
+        # Add lineage record
+        lineage_records.append((
+            run_id, src["name"], src["path"], raw_path, start_time, end_time, env["environment"]
+        ))
+
+        return int(df.count()), int(0), "SUCCESS", start_time, end_time, float(duration)
+    except Exception as e:
+        print(f"Error ingesting {src['name']}: {e}")
+        error_records.append((
+            run_id, src["name"], str(e), datetime.now(), env["environment"]
+        ))
+        return int(0), int(0), "FAILED", datetime.now(), datetime.now(), float(0)
+
+# -------------------------------------------------------------
+# Main Job
+# -------------------------------------------------------------
+def main():
+    run_id = str(uuid.uuid4())
+    job_name = "Raw-Ingestion"
+    job_start = datetime.now()
+
+    total_loaded, total_rejected = 0, 0
+    audit_records = []
+    error_records = []
+    lineage_records = []
+    overall_status = "SUCCESS"
+
+    for src in sources:
+        loaded, rejected, status, start_time, end_time, duration = ingest_source(src, run_id, error_records, lineage_records)
+        total_loaded += loaded
+        total_rejected += rejected
+
+        if status == "FAILED":
+            overall_status = "FAILED"
+
+        # Add per-source audit record
+        audit_records.append((
+            run_id, job_name, src["name"], start_time, end_time,
+            float(duration), int(loaded), int(rejected), env["environment"], status
+        ))
+
+    job_end = datetime.now()
+    job_duration = (job_end - job_start).total_seconds()
+
+    # Add job-level summary record
+    audit_records.append((
+        run_id, job_name, "JOB_SUMMARY", job_start, job_end,
+        float(job_duration), int(total_loaded), int(total_rejected),
+        env["environment"], overall_status
+    ))
+
+    # ✅ Schemas
+    audit_schema = StructType([
+        StructField("run_id", StringType(), True),
+        StructField("job_name", StringType(), True),
+        StructField("source_system", StringType(), True),
+        StructField("start_time", TimestampType(), True),
+        StructField("end_time", TimestampType(), True),
+        StructField("duration", DoubleType(), True),
+        StructField("records_loaded", LongType(), True),
+        StructField("records_rejected", LongType(), True),
+        StructField("environment", StringType(), True),
+        StructField("status", StringType(), True)
+    ])
+
+    error_schema = StructType([
+        StructField("run_id", StringType(), True),
+        StructField("source_system", StringType(), True),
+        StructField("error_message", StringType(), True),
+        StructField("error_time", TimestampType(), True),
+        StructField("environment", StringType(), True)
+    ])
+
+    lineage_schema = StructType([
+        StructField("run_id", StringType(), True),
+        StructField("source_system", StringType(), True),
+        StructField("source_path", StringType(), True),
+        StructField("target_path", StringType(), True),
+        StructField("start_time", TimestampType(), True),
+        StructField("end_time", TimestampType(), True),
+        StructField("environment", StringType(), True)
+    ])
+
+    # ✅ Write Audit Runs
+    audit_df = spark.createDataFrame(audit_records, schema=audit_schema)
+    audit_df.write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_runs"])
+
+    # ✅ Write Audit Errors
+    error_df = spark.createDataFrame(error_records, schema=error_schema) if error_records else spark.createDataFrame([], schema=error_schema)
+    error_df.write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_errors"])
+
+    # ✅ Write Audit Lineage
+    lineage_df = spark.createDataFrame(lineage_records, schema=lineage_schema) if lineage_records else spark.createDataFrame([], schema=lineage_schema)
+    lineage_df.write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_lineage"])
+
+    print(f"Ingestion complete. Run ID={run_id}, Loaded={total_loaded}, Rejected={total_rejected}, Status={overall_status}")
+
+    # Validation
+    spark.read.format("delta").load(paths["audit_runs"]).display(10)
+    spark.read.format("delta").load(paths["audit_errors"]).display(10)
+    spark.read.format("delta").load(paths["audit_lineage"]).display(10)
+
+# -------------------------------------------------------------
+# Entry Point
+# -------------------------------------------------------------
+main()
