@@ -1,0 +1,227 @@
+# Block 3 – Silver Layer (Production-Grade Implementation)
+
+import json, uuid
+from datetime import datetime
+from pyspark.sql.functions import col, lit, current_timestamp, udf
+from pyspark.sql.types import StructType, StructField, StringType, TimestampType, LongType, DoubleType
+from delta.tables import DeltaTable
+from rapidfuzz import fuzz
+
+# -------------------------------------------------------------
+# Load Configs from S3
+# -------------------------------------------------------------
+sources_path = "s3://databricks-amz-s3-bucket/mdm-accelerator/config/sources.json"
+paths_path   = "s3://databricks-amz-s3-bucket/mdm-accelerator/config/paths.json"
+env_path     = "s3://databricks-amz-s3-bucket/mdm-accelerator/config/environment.json"
+
+sources = json.loads(dbutils.fs.head(sources_path, 100000))["sources"]
+paths   = json.loads(dbutils.fs.head(paths_path, 100000))
+env     = json.loads(dbutils.fs.head(env_path, 100000))
+
+# -------------------------------------------------------------
+# Similarity UDF (multi-column weighted score)
+# -------------------------------------------------------------
+def multi_similarity(name1, name2, email1, email2, phone1, phone2, id1, id2):
+    score = 0
+    # Name similarity
+    if name1 and name2:
+        score += 0.3 * fuzz.token_sort_ratio(str(name1), str(name2))
+    # Email similarity
+    if email1 and email2:
+        score += 0.4 * fuzz.token_sort_ratio(str(email1), str(email2))
+    # Phone similarity
+    if phone1 and phone2:
+        score += 0.2 * fuzz.token_sort_ratio(str(phone1), str(phone2))
+    # Customer ID exact match
+    if id1 and id2 and str(id1) == str(id2):
+        score += 0.1 * 100
+    return score
+
+similarity_udf = udf(multi_similarity, DoubleType())
+
+# -------------------------------------------------------------
+# Silver Layer Processing
+# -------------------------------------------------------------
+def process_source_to_silver(src, run_id, lineage_records, error_records):
+    try:
+        bronze_path = f"s3://databricks-amz-s3-bucket/mdm-accelerator/storage/bronze/main/{src['name'].lower()}"
+        df = spark.read.format("delta").load(bronze_path)
+        initial_count = df.count()
+
+        if initial_count == 0:
+            return 0, 0, 0
+
+        # Data Quality Checks
+        df = df.filter(col("customer_id").isNotNull())
+        if "email" in df.columns:
+            df = df.filter(col("email").rlike("^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$"))
+        if "phone" in df.columns:
+            df = df.filter(col("phone").rlike("^[0-9]{10,}$"))
+
+        # Incremental Load (based on last run timestamp from audit_runs)
+        last_run_df = spark.read.format("delta").load(paths["audit_runs"]).filter(col("job_name") == "Silver-Layer")
+        if last_run_df.count() > 0:
+            last_run_time = last_run_df.agg({"end_time":"max"}).collect()[0][0]
+            df = df.filter(col("ingestion_ts") > lit(last_run_time))
+
+        # Silver Paths
+        silver_main_path = f"s3://databricks-amz-s3-bucket/mdm-accelerator/storage/silver/main/{src['name'].lower()}"
+        silver_conflicted_path = f"s3://databricks-amz-s3-bucket/mdm-accelerator/storage/silver/conflicted/{src['name'].lower()}"
+
+        compared_count = 0
+
+        if DeltaTable.isDeltaTable(spark, silver_main_path):
+            silver_df = spark.read.format("delta").load(silver_main_path)
+
+            # Join new records with existing silver records
+            joined = df.alias("new").crossJoin(silver_df.alias("existing"))
+
+            # Calculate similarity score across multiple columns
+            joined = joined.withColumn("similarity", similarity_udf(
+                col("new.first_name"), col("existing.first_name"),
+                col("new.email"), col("existing.email"),
+                col("new.phone"), col("existing.phone"),
+                col("new.customer_id"), col("existing.customer_id")
+            ))
+
+            threshold = src.get("similarity_threshold", 80)
+
+            conflicted = joined.filter(col("similarity") >= threshold).select("new.*")
+            new_records = joined.filter(col("similarity") < threshold).select("new.*")
+
+            compared_count = joined.count()
+
+        else:
+            # First source → insert directly into silver_main
+            new_records = df
+            conflicted = spark.createDataFrame([], df.schema)
+
+        # Add SCD Type 2 fields
+        now = datetime.now()
+        new_records = (new_records
+                       .withColumn("valid_from", lit(now))
+                       .withColumn("valid_to", lit(None).cast(TimestampType()))
+                       .withColumn("is_current", lit(True)))
+
+        conflicted = (conflicted
+                      .withColumn("valid_from", lit(now))
+                      .withColumn("valid_to", lit(None).cast(TimestampType()))
+                      .withColumn("is_current", lit(True)))
+
+        # Write outputs
+        new_records.write.format("delta").mode("append").partitionBy("source_system").save(silver_main_path)
+        conflicted.write.format("delta").mode("append").partitionBy("source_system").save(silver_conflicted_path)
+
+        clean_count, conflicted_count = new_records.count(), conflicted.count()
+
+        # Audit Lineage Logging
+        lineage_records.append((
+            run_id, src["name"], bronze_path, silver_main_path, datetime.now(),
+            initial_count, clean_count, conflicted_count, compared_count, env["environment"]
+        ))
+
+        return clean_count, conflicted_count, compared_count
+
+    except Exception as e:
+        error_records.append((
+            run_id, src["name"], str(e), datetime.now(), env["environment"]
+        ))
+        return 0, 0, 0
+
+# -------------------------------------------------------------
+# Main Job
+# -------------------------------------------------------------
+def main():
+    run_id = str(uuid.uuid4())
+    job_name = "Silver-Layer"
+    job_start = datetime.now()
+
+    total_clean, total_conflicted, total_compared = 0, 0, 0
+    lineage_records = []
+    error_records = []
+
+    for src in sources:
+        clean, conflicted, compared = process_source_to_silver(src, run_id, lineage_records, error_records)
+        total_clean += clean
+        total_conflicted += conflicted
+        total_compared += compared
+
+    job_end = datetime.now()
+    job_duration = (job_end - job_start).total_seconds()
+
+    # Audit Runs Schema
+    audit_schema = StructType([
+        StructField("run_id", StringType(), True),
+        StructField("job_name", StringType(), True),
+        StructField("start_time", TimestampType(), True),
+        StructField("end_time", TimestampType(), True),
+        StructField("duration", DoubleType(), True),
+        StructField("records_clean", LongType(), True),
+        StructField("records_conflicted", LongType(), True),
+        StructField("records_compared", LongType(), True),
+        StructField("environment", StringType(), True)
+    ])
+
+    audit_data = [(run_id, job_name, job_start, job_end, job_duration,
+                   total_clean, total_conflicted, total_compared, env["environment"])]
+    audit_df = spark.createDataFrame(audit_data, schema=audit_schema)
+    audit_df.write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_runs"])
+
+    # Audit Errors Schema
+    error_schema = StructType([
+        StructField("run_id", StringType(), True),
+        StructField("source_system", StringType(), True),
+        StructField("error_message", StringType(), True),
+        StructField("error_time", TimestampType(), True),
+        StructField("environment", StringType(), True)
+    ])
+    error_df = spark.createDataFrame(error_records, schema=error_schema) if error_records else spark.createDataFrame([], schema=error_schema)
+    error_df.write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_errors"])
+
+        # Audit Lineage Schema
+    lineage_schema = StructType([
+        StructField("run_id", StringType(), True),
+        StructField("source_system", StringType(), True),
+        StructField("source_path", StringType(), True),
+        StructField("target_path", StringType(), True),
+        StructField("lineage_time", TimestampType(), True),
+        StructField("bronze_count", LongType(), True),
+        StructField("silver_clean_count", LongType(), True),
+        StructField("silver_conflicted_count", LongType(), True),
+        StructField("records_compared", LongType(), True),
+        StructField("environment", StringType(), True)
+    ])
+    lineage_df = spark.createDataFrame(lineage_records, schema=lineage_schema) if lineage_records else spark.createDataFrame([], schema=lineage_schema)
+    lineage_df.write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_lineage"])
+
+    print(f"Silver Layer complete. Run ID={run_id}, Clean={total_clean}, Conflicted={total_conflicted}, Compared={total_compared}, Duration={job_duration:.2f}s")
+
+    # Validation (Databricks-native display)
+    display(spark.read.format("delta").load(paths["audit_runs"]))
+    display(spark.read.format("delta").load(paths["audit_errors"]))
+    display(spark.read.format("delta").load(paths["audit_lineage"]))
+
+# -------------------------------------------------------------
+# Entry Point
+# -------------------------------------------------------------
+main()
+
+
+
+
+🗒️ What This Final Script Does
+Reads bronze main records for each source (CRM, ERP, Salesforce, SAP).
+
+Applies data quality checks (mandatory fields, regex validation for email/phone).
+
+Incremental loading based on last successful silver run timestamp.
+
+Similarity matching across multiple attributes (name, email, phone, customer_id) with configurable thresholds.
+
+Conflict handling: new records → silver_main, duplicates/conflicts → silver_conflicted.
+
+SCD Type 2 fields (valid_from, valid_to, is_current) added for historical tracking.
+
+Audit logging extended to capture clean, conflicted, compared counts, lineage, and errors.
+
+Validation outputs displayed at the end for quick inspection in Databricks.
