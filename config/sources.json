@@ -2,7 +2,8 @@
     "sources": [
         {
             "name": "CRM",
-            "path": "data/source/crm/crm_customer.csv",
+            "path": "s3://databricks-amz-s3-bucket/mdm-accelerator/data/source/crm/crm_customer.csv",
+            "entity": "customer",
             "dedupe_keys": [
                 "email",
                 "phone"
@@ -14,9 +15,11 @@
         },
         {
             "name": "ERP",
-            "path": "data/source/erp/erp_customer.csv",
+            "path": "s3://databricks-amz-s3-bucket/mdm-accelerator/data/source/erp/erp_customer.csv",
+            "entity": "customer",
             "dedupe_keys": [
-                "customer_id"
+                "email",
+                "phone"
             ],
             "sensitive_fields": [
                 "customer_id"
@@ -24,7 +27,8 @@
         },
         {
             "name": "Salesforce",
-            "path": "data/source/salesforce/salesforce_customer.csv",
+            "path": "s3://databricks-amz-s3-bucket/mdm-accelerator/data/source/salesforce/salesforce_customer.csv",
+            "entity": "customer",
             "dedupe_keys": [
                 "email"
             ],
@@ -34,9 +38,11 @@
         },
         {
             "name": "SAP",
-            "path": "data/source/sap/sap_customer.csv",
+            "path": "s3://databricks-amz-s3-bucket/mdm-accelerator/data/source/sap/sap_customer.csv",
+            "entity": "customer",
             "dedupe_keys": [
-                "customer_id"
+                "email",
+                "phone"
             ],
             "sensitive_fields": [
                 "customer_id"
