@@ -1,10 +1,9 @@
-# Raw Ingestion Script (Databricks, Config-Driven, Delta Lake, Hybrid Full + Incremental)
+# Raw Ingestion Script (Databricks, Config-Driven, Delta Lake, Full Load Only)
 
 import json, uuid
 from datetime import datetime
 from pyspark.sql.functions import lit, current_timestamp
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType, TimestampType, LongType
-from delta.tables import DeltaTable
 
 # -------------------------------------------------------------
 # Load configs directly from S3 using dbutils.fs.head
@@ -18,13 +17,13 @@ paths   = json.loads(dbutils.fs.head(paths_path, 100000))
 env     = json.loads(dbutils.fs.head(env_path, 100000))
 
 # -------------------------------------------------------------
-# Helper: Ingest a source system (Full + Incremental)
+# Helper: Ingest a source system (Full Load Only)
 # -------------------------------------------------------------
 def ingest_source(src, run_id, error_records, lineage_records):
     try:
         start_time = datetime.now()
 
-        # ✅ Read CSV directly from S3
+        # Read CSV directly from S3
         df_new = spark.read.option("header", "true") \
                            .option("inferSchema", "true") \
                            .option("delimiter", ",") \
@@ -47,23 +46,9 @@ def ingest_source(src, run_id, error_records, lineage_records):
 
         raw_path = f"s3://databricks-amz-s3-bucket/mdm-accelerator/storage/raw/{src['name'].lower()}/{src['entity'].lower()}"
 
-        # ✅ Hybrid Full + Incremental
-        if not DeltaTable.isDeltaTable(spark, raw_path):
-            # First run → Full load
-            df_new.write.format("delta").mode("overwrite").save(raw_path)
-            load_type = "FULL"
-        else:
-            # Subsequent runs → Incremental (MERGE using business_key from config)
-            business_key = src.get("business_key", "customer_id")  # fallback if missing
-            delta_table = DeltaTable.forPath(spark, raw_path)
-            (
-                delta_table.alias("t")
-                .merge(df_new.alias("s"), f"t.{business_key} = s.{business_key}")
-                .whenMatchedUpdateAll()
-                .whenNotMatchedInsertAll()
-                .execute()
-            )
-            load_type = "INCREMENTAL"
+        # Always perform FULL load (overwrite)
+        df_new.write.format("delta").mode("overwrite").save(raw_path)
+        load_type = "FULL"
 
         end_time = datetime.now()
         duration = (end_time - start_time).total_seconds()
@@ -120,7 +105,7 @@ def main():
         env["environment"], overall_status, "SUMMARY"
     ))
 
-    # ✅ Schemas
+    # Schemas
     audit_schema = StructType([
         StructField("run_id", StringType(), True),
         StructField("job_name", StringType(), True),
@@ -132,7 +117,7 @@ def main():
         StructField("records_rejected", LongType(), True),
         StructField("environment", StringType(), True),
         StructField("status", StringType(), True),
-        StructField("load_type", StringType(), True)   # NEW: FULL or INCREMENTAL
+        StructField("load_type", StringType(), True)   # Always FULL now
     ])
 
     error_schema = StructType([
@@ -151,18 +136,18 @@ def main():
         StructField("start_time", TimestampType(), True),
         StructField("end_time", TimestampType(), True),
         StructField("environment", StringType(), True),
-        StructField("load_type", StringType(), True)   # NEW: FULL or INCREMENTAL
+        StructField("load_type", StringType(), True)   # Always FULL now
     ])
 
-    # ✅ Write Audit Runs
+    # Write Audit Runs
     audit_df = spark.createDataFrame(audit_records, schema=audit_schema)
     audit_df.write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_runs"])
 
-    # ✅ Write Audit Errors
+    # Write Audit Errors
     error_df = spark.createDataFrame(error_records, schema=error_schema) if error_records else spark.createDataFrame([], schema=error_schema)
     error_df.write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_errors"])
 
-    # ✅ Write Audit Lineage
+    # Write Audit Lineage
     lineage_df = spark.createDataFrame(lineage_records, schema=lineage_schema) if lineage_records else spark.createDataFrame([], schema=lineage_schema)
     lineage_df.write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_lineage"])
 
