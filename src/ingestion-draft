@@ -1,8 +1,8 @@
-# Raw Ingestion Script (Databricks, Config-Driven, Delta Lake, Full Load Only)
+# Raw Ingestion Script (Databricks, Config-Driven, Delta Lake, Append for History)
 
 import json, uuid
 from datetime import datetime
-from pyspark.sql.functions import lit, current_timestamp
+from pyspark.sql.functions import lit, current_timestamp, col
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType, TimestampType, LongType
 
 # -------------------------------------------------------------
@@ -17,7 +17,7 @@ paths   = json.loads(dbutils.fs.head(paths_path, 100000))
 env     = json.loads(dbutils.fs.head(env_path, 100000))
 
 # -------------------------------------------------------------
-# Helper: Ingest a source system (Full Load Only)
+# Helper: Ingest a source system (Append for History)
 # -------------------------------------------------------------
 def ingest_source(src, run_id, error_records, lineage_records):
     try:
@@ -44,11 +44,14 @@ def ingest_source(src, run_id, error_records, lineage_records):
                         .withColumn("ingestion_ts", current_timestamp())
                         .withColumn("run_id", lit(run_id)))
 
-        raw_path = f"s3://databricks-amz-s3-bucket/mdm-accelerator/storage/raw/{src['name'].lower()}/{src['entity'].lower()}"
+        raw_path = f"{paths['raw_' + src['name'].lower()]}"
 
-        # Always perform FULL load (overwrite)
-        df_new.write.format("delta").mode("overwrite").save(raw_path)
-        load_type = "FULL"
+        # Append new records (keep full history in raw)
+        (df_new.write.format("delta")
+              .mode("append")
+              .option("mergeSchema","true")
+              .save(raw_path))
+        load_type = "APPEND"
 
         end_time = datetime.now()
         duration = (end_time - start_time).total_seconds()
@@ -117,7 +120,7 @@ def main():
         StructField("records_rejected", LongType(), True),
         StructField("environment", StringType(), True),
         StructField("status", StringType(), True),
-        StructField("load_type", StringType(), True)   # Always FULL now
+        StructField("load_type", StringType(), True)   # APPEND now
     ])
 
     error_schema = StructType([
@@ -136,14 +139,14 @@ def main():
         StructField("start_time", TimestampType(), True),
         StructField("end_time", TimestampType(), True),
         StructField("environment", StringType(), True),
-        StructField("load_type", StringType(), True)   # Always FULL now
+        StructField("load_type", StringType(), True)   # APPEND now
     ])
 
     # Write Audit Runs
     audit_df = spark.createDataFrame(audit_records, schema=audit_schema)
     audit_df.write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_runs"])
 
-    # Write Audit Errors
+    # Write Audit Errors (always write, even if empty)
     error_df = spark.createDataFrame(error_records, schema=error_schema) if error_records else spark.createDataFrame([], schema=error_schema)
     error_df.write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_errors"])
 
@@ -153,7 +156,11 @@ def main():
 
     print(f"Ingestion complete. Run ID={run_id}, Loaded={total_loaded}, Rejected={total_rejected}, Status={overall_status}")
 
-    # Validation
+    # -------------------------------------------------------------
+    # Validation: Show all audit tables fully
+    # -------------------------------------------------------------
+    print("Displaying full audit tables:")
+
     display(spark.read.format("delta").load(paths["audit_runs"]))
     display(spark.read.format("delta").load(paths["audit_errors"]))
     display(spark.read.format("delta").load(paths["audit_lineage"]))
