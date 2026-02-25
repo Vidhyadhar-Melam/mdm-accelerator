@@ -1,8 +1,8 @@
-# Block 3 – Silver Layer (Enhanced Production-Grade)
+# Block 3 – Silver Layer (Enterprise-Grade)
 
 import json, uuid
 from datetime import datetime
-from pyspark.sql.functions import col, lit, udf, to_date
+from pyspark.sql.functions import col, lit, udf, to_date, substring_index
 from pyspark.sql.types import StructType, StructField, StringType, TimestampType, LongType, DoubleType
 from delta.tables import DeltaTable
 from rapidfuzz import fuzz
@@ -37,7 +37,7 @@ def multi_similarity(name1, name2, email1, email2, phone1, phone2, id1, id2):
 similarity_udf = udf(multi_similarity, DoubleType())
 
 # -------------------------------------------------------------
-# Initialize silver_error upfront (guaranteed folder creation)
+# Initialize silver_error upfront
 # -------------------------------------------------------------
 silver_error_schema = StructType([
     StructField("run_id", StringType(), True),
@@ -47,25 +47,28 @@ silver_error_schema = StructType([
     StructField("environment", StringType(), True)
 ])
 
-# try:
-#     spark.read.format("delta").load(paths["silver_error"])
-# except AnalysisException:
 empty_df = spark.createDataFrame([], silver_error_schema)
 empty_df.write.format("delta").mode("overwrite").save(paths["silver_error"])
 
 # -------------------------------------------------------------
 # Silver Layer Processing
 # -------------------------------------------------------------
-def process_source_to_silver(src, run_id, lineage_records, error_records, failed_records):
+def process_source_to_silver(src, run_id, lineage_records):
     try:
-        bronze_path = f"s3://databricks-amz-s3-bucket/mdm-accelerator/storage/bronze/main/{src['name'].lower()}"
+        bronze_path = f"{paths['bronze_main']}/{src['name'].lower()}"
         df = spark.read.format("delta").load(bronze_path)
         initial_count = df.count()
 
         if initial_count == 0:
             return 0, 0, 0
 
-        # Data Quality Checks
+        # ---------------- Schema Validation ----------------
+        expected_schema = ["customer_id","first_name","email","phone","ingestion_ts"]
+        missing_cols = [c for c in expected_schema if c not in df.columns]
+        if missing_cols:
+            raise Exception(f"Schema validation failed. Missing columns: {missing_cols}")
+
+        # ---------------- Data Quality Checks ----------------
         df = df.filter(col("customer_id").isNotNull())
         if "email" in df.columns:
             df = df.filter(col("email").rlike("^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$"))
@@ -75,29 +78,36 @@ def process_source_to_silver(src, run_id, lineage_records, error_records, failed
         # Remove duplicates
         df = df.dropDuplicates(["customer_id", "email", "phone"])
 
-        # Incremental Load (first run = full load)
+        # ---------------- Incremental Load ----------------
         last_run_df = spark.read.format("delta").load(paths["audit_runs"]).filter(col("job_name") == "Silver-Layer")
         if last_run_df.count() > 0:
             last_run_time = last_run_df.agg({"end_time":"max"}).collect()[0][0]
             df = df.filter(col("ingestion_ts") > lit(last_run_time))
             load_type = "INCREMENTAL"
         else:
-            load_type = "FULL"  # first run → load everything
+            load_type = "FULL"
 
         # Add ingestion_date
         if "ingestion_ts" in df.columns:
             df = df.withColumn("ingestion_date", to_date(col("ingestion_ts")))
+        else:
+            df = df.withColumn("ingestion_date", lit(None).cast(StringType()))
 
-        # Silver Paths
-        silver_main_path = f"s3://databricks-amz-s3-bucket/mdm-accelerator/storage/silver/main/{src['name'].lower()}"
-        silver_conflicted_path = f"s3://databricks-amz-s3-bucket/mdm-accelerator/storage/silver/conflicted/{src['name'].lower()}"
+        # Add source_system explicitly
+        df = df.withColumn("source_system", lit(src["name"]))
+
+        # ---------------- Blocking Key for Similarity ----------------
+        df = df.withColumn("blocking_key", substring_index(col("email"), "@", -1))
+        silver_main_path = f"{paths['silver_main']}/{src['name'].lower()}"
+        silver_conflicted_path = f"{paths['silver_conflicted']}/{src['name'].lower()}"
 
         compared_count = 0
 
         if DeltaTable.isDeltaTable(spark, silver_main_path):
             silver_df = spark.read.format("delta").load(silver_main_path)
+            silver_df = silver_df.withColumn("blocking_key", substring_index(col("email"), "@", -1))
 
-            joined = df.alias("new").crossJoin(silver_df.alias("existing"))
+            joined = df.alias("new").join(silver_df.alias("existing"), "blocking_key")
 
             joined = joined.withColumn("similarity", similarity_udf(
                 col("new.first_name"), col("existing.first_name"),
@@ -112,29 +122,45 @@ def process_source_to_silver(src, run_id, lineage_records, error_records, failed
             new_records = joined.filter(col("similarity") < threshold).select("new.*")
 
             compared_count = joined.count()
-
         else:
-            # First run → all records are new
             new_records = df
             conflicted = spark.createDataFrame([], df.schema)
 
-        # Add SCD Type 2 fields
+        # ---------------- SCD Type 2 ----------------
         now = datetime.now()
         new_records = (new_records
                        .withColumn("valid_from", lit(now))
                        .withColumn("valid_to", lit(None).cast(TimestampType()))
                        .withColumn("is_current", lit(True)))
-
         conflicted = (conflicted
                       .withColumn("valid_from", lit(now))
                       .withColumn("valid_to", lit(None).cast(TimestampType()))
                       .withColumn("is_current", lit(True)))
 
-        # Write outputs (batch mode, no checkpoints)
-        new_records.write.format("delta").mode("append").partitionBy("source_system","ingestion_date").save(silver_main_path)
-        conflicted.write.format("delta").mode("append").partitionBy("source_system","ingestion_date").save(silver_conflicted_path)
+        # ---------------- Ensure partition columns ----------------
+        new_records = new_records.withColumn("source_system", lit(src["name"]))
+        conflicted = conflicted.withColumn("source_system", lit(src["name"]))
+
+        if "ingestion_ts" in df.columns:
+            new_records = new_records.withColumn("ingestion_date", to_date(col("ingestion_ts")))
+            conflicted = conflicted.withColumn("ingestion_date", to_date(col("ingestion_ts")))
+        else:
+            new_records = new_records.withColumn("ingestion_date", lit(None).cast(StringType()))
+            conflicted = conflicted.withColumn("ingestion_date", lit(None).cast(StringType()))
+
+        # ---------------- Write Outputs ----------------
+        new_records.write.format("delta").mode("append").option("mergeSchema","true") \
+            .partitionBy("source_system","ingestion_date").save(silver_main_path)
+
+        conflicted.write.format("delta").mode("append").option("mergeSchema","true") \
+            .partitionBy("source_system","ingestion_date").save(silver_conflicted_path)
 
         clean_count, conflicted_count = new_records.count(), conflicted.count()
+
+        # ---------------- Observability Metrics ----------------
+        conflict_rate = (conflicted_count / initial_count * 100) if initial_count > 0 else 0
+        clean_rate = (clean_count / initial_count * 100) if initial_count > 0 else 0
+        print(f"Run {run_id}: Clean={clean_count} ({clean_rate:.2f}%), Conflicted={conflicted_count} ({conflict_rate:.2f}%), Compared={compared_count}")
 
         lineage_records.append((run_id, src["name"], bronze_path, silver_main_path, datetime.now(),
                                 initial_count, clean_count, conflicted_count, compared_count, env["environment"], load_type))
@@ -142,8 +168,11 @@ def process_source_to_silver(src, run_id, lineage_records, error_records, failed
         return clean_count, conflicted_count, compared_count
 
     except Exception as e:
-        error_records.append((run_id, src["name"], str(e), datetime.now(), env["environment"]))
-        failed_records.append(df)  # persist failed rows
+        error_df = spark.createDataFrame(
+            [(run_id, src["name"], str(e), datetime.now(), env["environment"])],
+            silver_error_schema
+        )
+        error_df.write.format("delta").mode("append").save(paths["silver_error"])
         return 0, 0, 0
 
 # -------------------------------------------------------------
@@ -155,10 +184,10 @@ def main():
     job_start = datetime.now()
 
     total_clean, total_conflicted, total_compared = 0, 0, 0
-    lineage_records, error_records, failed_records = [], [], []
+    lineage_records = []
 
     for src in sources:
-        clean, conflicted, compared = process_source_to_silver(src, run_id, lineage_records, error_records, failed_records)
+        clean, conflicted, compared = process_source_to_silver(src, run_id, lineage_records)
         total_clean += clean
         total_conflicted += conflicted
         total_compared += compared
@@ -166,7 +195,7 @@ def main():
     job_end = datetime.now()
     job_duration = (job_end - job_start).total_seconds()
 
-    # ---------------- Audit Runs ----------------
+        # ---------------- Audit Runs ----------------
     audit_schema = StructType([
         StructField("run_id", StringType(), True),
         StructField("job_name", StringType(), True),
@@ -183,17 +212,6 @@ def main():
     audit_df = spark.createDataFrame(audit_data, schema=audit_schema)
     audit_df.write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_runs"])
 
-        # ---------------- Audit Errors ----------------
-    error_schema = StructType([
-        StructField("run_id", StringType(), True),
-        StructField("source_system", StringType(), True),
-        StructField("error_message", StringType(), True),
-        StructField("error_time", TimestampType(), True),
-        StructField("environment", StringType(), True)
-    ])
-    error_df = spark.createDataFrame(error_records, schema=error_schema) if error_records else spark.createDataFrame([], schema=error_schema)
-    error_df.write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_errors"])
-
     # ---------------- Audit Lineage ----------------
     lineage_schema = StructType([
         StructField("run_id", StringType(), True),
@@ -206,40 +224,16 @@ def main():
         StructField("silver_conflicted_count", LongType(), True),
         StructField("records_compared", LongType(), True),
         StructField("environment", StringType(), True),
-        StructField("load_type", StringType(), True)   # FULL or INCREMENTAL
+        StructField("load_type", StringType(), True)
     ])
     lineage_df = spark.createDataFrame(lineage_records, schema=lineage_schema) if lineage_records else spark.createDataFrame([], schema=lineage_schema)
     lineage_df.write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_lineage"])
-
-    # ---------------- Silver Error ----------------
-    silver_error_schema = StructType([
-        StructField("run_id", StringType(), True),
-        StructField("source_system", StringType(), True),
-        StructField("error_message", StringType(), True),
-        StructField("error_time", TimestampType(), True),
-        StructField("environment", StringType(), True)
-    ])
-
-    if failed_records:
-        failed_union = failed_records[0]
-        for fr in failed_records[1:]:
-            failed_union = failed_union.unionByName(fr, allowMissingColumns=True)
-        failed_union.write.format("delta").mode("append").option("mergeSchema","true").save(paths["silver_error"])
-    else:
-        # Ensure silver_error folder always exists
-        try:
-            spark.read.format("delta").load(paths["silver_error"])
-        except AnalysisException:
-            empty_df = spark.createDataFrame([], silver_error_schema)
-            empty_df.write.format("delta").mode("overwrite").save(paths["silver_error"])
 
     print(f"Silver Layer complete. Run ID={run_id}, Clean={total_clean}, Conflicted={total_conflicted}, Compared={total_compared}, Duration={job_duration:.2f}s")
 
     # ---------------- Validation Outputs ----------------
     print("Displaying full audit tables:")
-
     display(spark.read.format("delta").load(paths["audit_runs"]))
-    display(spark.read.format("delta").load(paths["audit_errors"]))
     display(spark.read.format("delta").load(paths["audit_lineage"]))
     display(spark.read.format("delta").load(paths["silver_error"]))
 
@@ -247,3 +241,4 @@ def main():
 # Entry Point
 # -------------------------------------------------------------
 main()
+
