@@ -1,6 +1,6 @@
 # Block 2: Self-Deduplication (RAW → Bronze)
+# Production-grade: Snapshot tables + Audit history
 # Config-driven, Audit-enabled, Delta Lake
-# Adds ingestion_date for partitioning
 
 import json, uuid
 from datetime import datetime
@@ -55,9 +55,21 @@ def dedupe_source(src, run_id, error_records, lineage_records):
         bronze_main_path = f"{paths['bronze_main']}/{src['name'].lower()}"
         bronze_conflicted_path = f"{paths['bronze_conflicted']}/{src['name'].lower()}"
 
-        # Write outputs partitioned by ingestion_date
-        df_main.write.format("delta").mode("append").option("mergeSchema","true").partitionBy("ingestion_date").save(bronze_main_path)
-        df_conflicted.write.format("delta").mode("append").option("mergeSchema","true").partitionBy("ingestion_date").save(bronze_conflicted_path)
+        # ---------------------------------------------------------
+        # Production-grade write pattern
+        # ---------------------------------------------------------
+        # Snapshot mode: overwrite ensures latest run only
+        df_main.write.format("delta").mode("overwrite").option("mergeSchema","true") \
+            .partitionBy("ingestion_date").save(bronze_main_path)
+
+        df_conflicted.write.format("delta").mode("overwrite").option("mergeSchema","true") \
+            .partitionBy("ingestion_date").save(bronze_conflicted_path)
+
+        # Optional: Historical mode (append with run_id partitioning)
+        # Uncomment if you want to keep conflicts per run
+        # df_conflicted.withColumn("run_id", lit(run_id)) \
+        #     .write.format("delta").mode("append").option("mergeSchema","true") \
+        #     .partitionBy("run_id").save(bronze_conflicted_path)
 
         load_type = "DEDUP"
 
@@ -173,3 +185,5 @@ def main():
 # Entry Point
 # -------------------------------------------------------------
 main()
+
+# So with your current setup: Main stays at 28, Conflicted stays at 1556, and neither will increase just by rerunning. Only new ingested records will change those counts.
