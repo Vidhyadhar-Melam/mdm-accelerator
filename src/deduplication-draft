@@ -1,13 +1,15 @@
-# Deduplication Script (Batch Only, Bronze Layer Creation, Production-Grade)
+# Block 2: Self-Deduplication (RAW → Bronze)
+# Config-driven, Audit-enabled, Delta Lake
+# Adds ingestion_date for partitioning
 
 import json, uuid
 from datetime import datetime
-from pyspark.sql.functions import col, row_number, to_date, lit
-from pyspark.sql.window import Window
-from pyspark.sql.types import StructType, StructField, StringType, TimestampType, LongType, DoubleType
+from pyspark.sql import Window
+from pyspark.sql.functions import col, row_number, lit, current_timestamp, to_date
+from pyspark.sql.types import StructType, StructField, StringType, DoubleType, TimestampType, LongType
 
 # -------------------------------------------------------------
-# Load Configs from S3 (Databricks-native)
+# Load configs
 # -------------------------------------------------------------
 sources_path = "s3://databricks-amz-s3-bucket/mdm-accelerator/config/sources.json"
 paths_path   = "s3://databricks-amz-s3-bucket/mdm-accelerator/config/paths.json"
@@ -18,124 +20,117 @@ paths   = json.loads(dbutils.fs.head(paths_path, 100000))
 env     = json.loads(dbutils.fs.head(env_path, 100000))
 
 # -------------------------------------------------------------
-# Data Quality Checks
+# Helper: Deduplicate a source system
 # -------------------------------------------------------------
-def apply_quality_checks(df):
-    # Mandatory field checks
-    df_valid = df.filter(col("customer_id").isNotNull())
-    # Email format validation
-    if "email" in df_valid.columns:
-        df_valid = df_valid.filter(col("email").rlike("^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$"))
-    # Phone format validation
-    if "phone" in df_valid.columns:
-        df_valid = df_valid.filter(col("phone").rlike("^[0-9]{10,}$"))
-
-    # Rejected = records failing checks
-    rejected = df.subtract(df_valid)
-    return df_valid, rejected
-
-# -------------------------------------------------------------
-# Deduplication Logic (Ranking)
-# -------------------------------------------------------------
-def dedupe_dataframe(df, src):
-    keys = src["dedupe_keys"]
-    window = Window.partitionBy([col(k) for k in keys]).orderBy(col("ingestion_ts").desc())
-
-    deduped = df.withColumn("row_num", row_number().over(window)) \
-                .filter(col("row_num") == 1).drop("row_num")
-
-    conflicted = df.withColumn("row_num", row_number().over(window)) \
-                   .filter(col("row_num") > 1).drop("row_num")
-
-    return deduped, conflicted
-
-# -------------------------------------------------------------
-# Batch Deduplication per Source
-# -------------------------------------------------------------
-def dedupe_source_batch(src, run_id, lineage_records, error_records):
+def dedupe_source(src, run_id, error_records, lineage_records):
     try:
-        raw_path = f"s3://databricks-amz-s3-bucket/mdm-accelerator/storage/raw/{src['name'].lower()}/{src['entity'].lower()}"
-        df = spark.read.format("delta").load(raw_path)
-        initial_count = df.count()
+        start_time = datetime.now()
 
-        if initial_count == 0:
-            return 0, 0, 0
+        # Read RAW Delta table
+        raw_path = paths["raw_" + src["name"].lower()]
+        df_raw = spark.read.format("delta").load(raw_path)
 
-        if "ingestion_date" not in df.columns and "ingestion_ts" in df.columns:
-            df = df.withColumn("ingestion_date", to_date(col("ingestion_ts")))
+        # Window spec for ranking (dedupe keys from sources.json)
+        dedupe_keys = src.get("dedupe_keys", ["customer_id"])
+        w = Window.partitionBy(*dedupe_keys).orderBy(col("ingestion_ts").desc())
 
-        # Apply quality checks
-        df_valid, rejected = apply_quality_checks(df)
+        df_ranked = df_raw.withColumn("rank", row_number().over(w))
 
-        # Deduplication
-        deduped, conflicted = dedupe_dataframe(df_valid, src)
+        # Split into main bronze and conflicted bronze
+        df_main = df_ranked.filter(col("rank") == 1).drop("rank")
+        df_conflicted = df_ranked.filter(col("rank") > 1).drop("rank")
 
-        # Paths
-        main_path = f"s3://databricks-amz-s3-bucket/mdm-accelerator/storage/bronze/main/{src['name'].lower()}"
-        conflicted_path = f"s3://databricks-amz-s3-bucket/mdm-accelerator/storage/bronze/conflicted/{src['name'].lower()}"
-        rejected_path = f"s3://databricks-amz-s3-bucket/mdm-accelerator/storage/bronze/rejected/{src['name'].lower()}"
+        # Add metadata
+        df_main = (df_main.withColumn("bronze_type", lit("MAIN"))
+                           .withColumn("dedupe_run_id", lit(run_id))
+                           .withColumn("dedupe_ts", current_timestamp())
+                           .withColumn("ingestion_date", to_date(col("ingestion_ts"))))
 
-        # Write outputs
-        deduped.write.format("delta").mode("overwrite").partitionBy("ingestion_date").save(main_path)
-        conflicted.write.format("delta").mode("overwrite").partitionBy("ingestion_date").save(conflicted_path)
-        rejected.write.format("delta").mode("overwrite").partitionBy("ingestion_date").save(rejected_path)
+        df_conflicted = (df_conflicted.withColumn("bronze_type", lit("CONFLICTED"))
+                                     .withColumn("dedupe_run_id", lit(run_id))
+                                     .withColumn("dedupe_ts", current_timestamp())
+                                     .withColumn("ingestion_date", to_date(col("ingestion_ts"))))
 
-        clean_count, conflicted_count, rejected_count = deduped.count(), conflicted.count(), rejected.count()
+        # Dynamic subfolder paths
+        bronze_main_path = f"{paths['bronze_main']}/{src['name'].lower()}"
+        bronze_conflicted_path = f"{paths['bronze_conflicted']}/{src['name'].lower()}"
 
-        # Audit Lineage Logging
+        # Write outputs partitioned by ingestion_date
+        df_main.write.format("delta").mode("append").option("mergeSchema","true").partitionBy("ingestion_date").save(bronze_main_path)
+        df_conflicted.write.format("delta").mode("append").option("mergeSchema","true").partitionBy("ingestion_date").save(bronze_conflicted_path)
+
+        load_type = "DEDUP"
+
+        end_time = datetime.now()
+        duration = (end_time - start_time).total_seconds()
+
+        # Lineage record
         lineage_records.append((
-            run_id, src["name"], raw_path, main_path, datetime.now(),
-            initial_count, clean_count, conflicted_count, rejected_count, env["environment"]
+            run_id, src["name"], raw_path, bronze_main_path, start_time, end_time, env["environment"], load_type
         ))
 
-        return clean_count, conflicted_count, rejected_count
+        return int(df_main.count()), int(df_conflicted.count()), "SUCCESS", start_time, end_time, float(duration), load_type
 
     except Exception as e:
+        print(f"Error deduping {src['name']}: {e}")
         error_records.append((
             run_id, src["name"], str(e), datetime.now(), env["environment"]
         ))
-        return 0, 0, 0
+        return 0, 0, "FAILED", datetime.now(), datetime.now(), 0.0, "FAILED"
 
 # -------------------------------------------------------------
 # Main Job
 # -------------------------------------------------------------
 def main():
     run_id = str(uuid.uuid4())
-    job_name = "Deduplication"
+    job_name = "Raw-to-Bronze-Dedup"
     job_start = datetime.now()
 
-    total_clean, total_conflicted, total_rejected = 0, 0, 0
-    lineage_records = []
+    total_main, total_conflicted = 0, 0
+    audit_records = []
     error_records = []
+    lineage_records = []
+    overall_status = "SUCCESS"
 
     for src in sources:
-        clean, conflicted, rejected = dedupe_source_batch(src, run_id, lineage_records, error_records)
-        total_clean += clean
-        total_conflicted += conflicted
-        total_rejected += rejected
+        main_count, conflicted_count, status, start_time, end_time, duration, load_type = dedupe_source(src, run_id, error_records, lineage_records)
+        total_main += main_count
+        total_conflicted += conflicted_count
+
+        if status == "FAILED":
+            overall_status = "FAILED"
+
+        # Per-source audit record
+        audit_records.append((
+            run_id, job_name, src["name"], start_time, end_time,
+            float(duration), int(main_count), int(conflicted_count), env["environment"], status, load_type
+        ))
 
     job_end = datetime.now()
     job_duration = (job_end - job_start).total_seconds()
 
-    # Audit Runs Schema
+    # Job-level summary
+    audit_records.append((
+        run_id, job_name, "JOB_SUMMARY", job_start, job_end,
+        float(job_duration), int(total_main), int(total_conflicted),
+        env["environment"], overall_status, "SUMMARY"
+    ))
+
+    # Schemas
     audit_schema = StructType([
         StructField("run_id", StringType(), True),
         StructField("job_name", StringType(), True),
+        StructField("source_system", StringType(), True),
         StructField("start_time", TimestampType(), True),
         StructField("end_time", TimestampType(), True),
         StructField("duration", DoubleType(), True),
-        StructField("records_clean", LongType(), True),
+        StructField("records_main", LongType(), True),
         StructField("records_conflicted", LongType(), True),
-        StructField("records_rejected", LongType(), True),
-        StructField("environment", StringType(), True)
+        StructField("environment", StringType(), True),
+        StructField("status", StringType(), True),
+        StructField("load_type", StringType(), True)
     ])
 
-    audit_data = [(run_id, job_name, job_start, job_end, job_duration,
-                   total_clean, total_conflicted, total_rejected, env["environment"])]
-    audit_df = spark.createDataFrame(audit_data, schema=audit_schema)
-    audit_df.write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_runs"])
-
-    # Audit Errors Schema
     error_schema = StructType([
         StructField("run_id", StringType(), True),
         StructField("source_system", StringType(), True),
@@ -143,28 +138,33 @@ def main():
         StructField("error_time", TimestampType(), True),
         StructField("environment", StringType(), True)
     ])
-    error_df = spark.createDataFrame(error_records, schema=error_schema) if error_records else spark.createDataFrame([], schema=error_schema)
-    error_df.write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_errors"])
 
-    # Audit Lineage Schema
     lineage_schema = StructType([
         StructField("run_id", StringType(), True),
         StructField("source_system", StringType(), True),
         StructField("source_path", StringType(), True),
         StructField("target_path", StringType(), True),
-        StructField("lineage_time", TimestampType(), True),
-        StructField("raw_count", LongType(), True),
-        StructField("clean_count", LongType(), True),
-        StructField("conflicted_count", LongType(), True),
-        StructField("rejected_count", LongType(), True),
-        StructField("environment", StringType(), True)
+        StructField("start_time", TimestampType(), True),
+        StructField("end_time", TimestampType(), True),
+        StructField("environment", StringType(), True),
+        StructField("load_type", StringType(), True)
     ])
+
+    # Write Audit Runs
+    audit_df = spark.createDataFrame(audit_records, schema=audit_schema)
+    audit_df.write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_runs"])
+
+    # Write Audit Errors
+    error_df = spark.createDataFrame(error_records, schema=error_schema) if error_records else spark.createDataFrame([], schema=error_schema)
+    error_df.write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_errors"])
+
+    # Write Audit Lineage
     lineage_df = spark.createDataFrame(lineage_records, schema=lineage_schema) if lineage_records else spark.createDataFrame([], schema=lineage_schema)
     lineage_df.write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_lineage"])
 
-    print(f"Deduplication complete. Run ID={run_id}, Clean={total_clean}, Conflicted={total_conflicted}, Rejected={total_rejected}, Duration={job_duration:.2f}s")
+    print(f"Deduplication complete. Run ID={run_id}, Main={total_main}, Conflicted={total_conflicted}, Status={overall_status}")
 
-    # Validation (Databricks-native display)
+    # Validation: Show audit tables
     display(spark.read.format("delta").load(paths["audit_runs"]))
     display(spark.read.format("delta").load(paths["audit_errors"]))
     display(spark.read.format("delta").load(paths["audit_lineage"]))
