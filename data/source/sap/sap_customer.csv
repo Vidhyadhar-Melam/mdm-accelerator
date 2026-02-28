@@ -1,43 +1,31 @@
 customer_id,first_name,last_name,email,phone,address,city,country,created_ts
-SAP4001,Suresh,Pillai,suresh.pillai@example.com,9345678900,21 Palm St,Trivandrum,India,2026-02-01   <-------------------- original
-SAP4006,Suresh,Pillai,suresh.pillai@example.com,9345678900,21 Palm St,Trivandrum,India,2026-02-06   <------------ duplicate
-SAP4010,Suresh,Pillai,suresh.pillai@example.com,9345678900,21 Palm St,Trivandrum,India,2026-02-10   <------------ duplicate
-SAP4015,Suresh,Pillai,suresh.pillai@example.com,9345678900,21 Palm St,Trivandrum,India,2026-02-15   <------------ duplicate
-
-SAP4002,Anita,Kapoor,anita.kapoor@example.com,9345678901,55 Rose Rd,Delhi,India,2026-02-02   <-------------------- original
-SAP4007,Anita,Kapoor,anita.kapoor@example.com,9345678901,55 Rose Rd,Delhi,India,2026-02-07   <------------ duplicate
-SAP4012,Anita,Kapoor,anita.kapoor@example.com,9345678901,55 Rose Rd,Delhi,India,2026-02-12   <------------ duplicate
-
-SAP4003,Rajesh,Mehta,rajesh.mehta@example.com,9345678902,77 Lotus St,Mumbai,India,2026-02-03   <-------------------- original
-SAP4013,Rajesh,Mehta,rajesh.mehta@example.com,9345678902,77 Lotus St,Mumbai,India,2026-02-13   <------------ duplicate
-
-SAP4004,Deepa,Iyer,deepa.iyer@example.com,9345678903,88 Pine Rd,Chennai,India,2026-02-04   <-------------------- original
-SAP4008,Deepa,Iyer,deepa.iyer@example.com,9345678903,88 Pine Rd,Chennai,India,2026-02-08   <------------ duplicate
-SAP4014,Deepa,Iyer,deepa.iyer@example.com,9345678903,88 Pine Rd,Chennai,India,2026-02-14   <------------ duplicate
-
-SAP4005,Kiran,Shah,kiran.shah@example.com,9345678904,99 Lotus Rd,Ahmedabad,India,2026-02-05   <-------------------- original
-SAP4009,Kiran,Shah,kiran.shah@example.com,9345678904,99 Lotus Rd,Ahmedabad,India,2026-02-09   <------------ duplicate
-SAP4011,Kiran,Shah,kiran.shah@example.com,9345678904,99 Lotus Rd,Ahmedabad,India,2026-02-11   <------------ duplicate
-SAP4016,Kiran,Shah,kiran.shah@example.com,9345678904,99 Lotus Rd,Ahmedabad,India,2026-02-16   <------------ duplicate
-
-SAP4017,Suresh,Pillai,suresh.pillai@example.com,9345678900,21 Palm St,Trivandrum,India,2026-02-17   <------------ duplicate
-SAP4018,Anita,Kapoor,anita.kapoor@example.com,9345678901,55 Rose Rd,Delhi,India,2026-02-17   <------------ duplicate
-SAP4019,Rajesh,Mehta,rajesh.mehta@example.com,9345678902,77 Lotus St,Mumbai,India,2026-02-17   <------------ duplicate
-SAP4020,Deepa,Iyer,deepa.iyer@example.com,9345678903,88 Pine Rd,Chennai,India,2026-02-17   <------------ duplicate
-
-SAP4025,Neha,Gupta,neha.gupta@example.com,9345678905,55 Cedar St,Jaipur,India,2026-02-20   <-------------------- original
-SAP4026,Arjun,Patel,arjun.patel@example.com,9345678906,44 Palm Rd,Ahmedabad,India,2026-02-20   <-------------------- original
-
-SAP4027,Suresh,Pillai,suresh.pillai@example.com,9345678900,21 Palm St,Trivandrum,India,2026-02-20   <------------ duplicate
-SAP4028,Anita,Kapoor,anita.kapoor@example.com,9345678901,55 Rose Rd,Delhi,India,2026-02-20   <------------ duplicate
-SAP4029,Rajesh,Mehta,rajesh.mehta@example.com,9345678902,77 Lotus St,Mumbai,India,2026-02-20   <------------ duplicate
-SAP4030,Deepa,Iyer,deepa.iyer@example.com,9345678903,88 Pine Rd,Chennai,India,2026-02-20   <------------ duplicate
-
-SAP4031,Suresh,Pillai,suresh.pillai@example.com,9345678900,21 Palm St,Trivandrum,India,2026-02-21   <------------ duplicate
-SAP4032,Neha,Gupta,neha.gupta@example.com,9345678905,55 Cedar St,Jaipur,India,2026-02-21   <------------ duplicate
-
-SAP4033,Suresh,Pillai,suresh.pillai@example.com,9345678900,21 Palm St,Trivandrum,India,2026-02-22   <------------ duplicate
-SAP4034,Neha,Gupta,neha.gupta@example.com,9345678905,55 Cedar St,Jaipur,India,2026-02-22   <------------ duplicate
-
-SAP4035,Suresh,Pillai,suresh.pillai@example.com,9345678900,21 Palm St,Trivandrum,India,2026-02-23   <------------ duplicate
-SAP4036,Neha,Gupta,neha.gupta@example.com,9345678905,55 Cedar St,Jaipur,India,2026-02-23   <------------ duplicate
+SAP4001,Suresh,Pillai,suresh.pillai@example.com,9345678900,21 Palm St,Trivandrum,India,2026-02-01
+SAP4002,Anita,Kapoor,anita.kapoor@example.com,9345678901,55 Rose Rd,Delhi,India,2026-02-02
+SAP4003,Rajesh,Mehta,rajesh.mehta@example.com,9345678902,77 Lotus St,Mumbai,India,2026-02-03
+SAP4004,Deepa,Iyer,deepa.iyer@example.com,9345678903,88 Pine Rd,Chennai,India,2026-02-04
+SAP4005,Kiran,Shah,kiran.shah@example.com,9345678904,99 Lotus Rd,Ahmedabad,India,2026-02-05
+SAP4006,Suresh,Pillai,suresh.pillai@example.com,9345678900,21 Palm St,Trivandrum,India,2026-02-06
+SAP4007,Anita,Kapoor,anita.kapoor@example.com,9345678901,55 Rose Rd,Delhi,India,2026-02-07
+SAP4008,Deepa,Iyer,deepa.iyer@example.com,9345678903,88 Pine Rd,Chennai,India,2026-02-08
+SAP4009,Kiran,Shah,kiran.shah@example.com,9345678904,99 Lotus Rd,Ahmedabad,India,2026-02-09
+SAP4010,Suresh,Pillai,suresh.pillai@example.com,9345678900,21 Palm St,Trivandrum,India,2026-02-10
+SAP4011,Kiran,Shah,kiran.shah@example.com,9345678904,99 Lotus Rd,Ahmedabad,India,2026-02-11
+SAP4012,Anita,Kapoor,anita.kapoor@example.com,9345678901,55 Rose Rd,Delhi,India,2026-02-12
+SAP4013,Rajesh,Mehta,rajesh.mehta@example.com,9345678902,77 Lotus St,Mumbai,India,2026-02-13
+SAP4014,Deepa,Iyer,deepa.iyer@example.com,9345678903,88 Pine Rd,Chennai,India,2026-02-14
+SAP4015,Suresh,Pillai,suresh.pillai99@example.com,9345678900,21 Palm St,Trivandrum,India,2026-02-15
+SAP4016,Kiran,Shah,kiran.shah88@example.com,9345678904,99 Lotus Rd,Ahmedabad,India,2026-02-16
+SAP4017,Anita,Kapoor,anita.kapoor77@example.com,9345678901,55 Rose Rd,Delhi,India,2026-02-17
+SAP4018,Rajesh,Mehta,rajesh.mehta66@example.com,9345678902,77 Lotus St,Mumbai,India,2026-02-18
+SAP4019,Deepa,Iyer,deepa.iyer55@example.com,9345678903,88 Pine Rd,Chennai,India,2026-02-19
+SAP4020,Suresh,Pillai,suresh.pillai44@example.com,9345678900,21 Palm St,Trivandrum,India,2026-02-20
+SAP4021,Kiran,Shah,kiran.shah33@example.com,9345678904,99 Lotus Rd,Ahmedabad,India,2026-02-21
+SAP4022,Anita,Kapoor,anita.kapoor22@example.com,9345678901,55 Rose Rd,Delhi,India,2026-02-22
+SAP4023,Rajesh,Mehta,rajesh.mehta11@example.com,9345678902,77 Lotus St,Mumbai,India,2026-02-23
+SAP4024,Deepa,Iyer,deepa.iyer00@example.com,9345678903,88 Pine Rd,Chennai,India,2026-02-24
+SAP4025,Suresh,Pillai,suresh.pillai88@example.com,9345678900,21 Palm St,Trivandrum,India,2026-02-25
+SAP4026,Kiran,Shah,kiran.shah77@example.com,9345678904,99 Lotus Rd,Ahmedabad,India,2026-02-26
+SAP4027,Anita,Kapoor,anita.kapoor66@example.com,9345678901,55 Rose Rd,Delhi,India,2026-02-27
+SAP4028,Rajesh,Mehta,rajesh.mehta55@example.com,9345678902,77 Lotus St,Mumbai,India,2026-02-28
+SAP4029,Deepa,Iyer,deepa.iyer44@example.com,9345678903,88 Pine Rd,Chennai,India,2026-02-28
+SAP4030,Suresh,Pillai,suresh.pillai33@example.com,9345678900,21 Palm St,Trivandrum,India,2026-02-28
