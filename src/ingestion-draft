@@ -2,7 +2,7 @@
 
 import json, uuid
 from datetime import datetime
-from pyspark.sql.functions import lit, current_timestamp, col
+from pyspark.sql.functions import lit, current_timestamp, col, regexp_replace, to_date, when
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType, TimestampType, LongType
 
 # -------------------------------------------------------------
@@ -38,6 +38,24 @@ def ingest_source(src, run_id, error_records, lineage_records):
                 df_new = df_new.withColumnRenamed(col_name,"phone")
             if lower in ["id","cust_id","customerid","customer_id"]:
                 df_new = df_new.withColumnRenamed(col_name,"customer_id")
+
+        # -------------------------------------------------------------
+        # Normalize created_ts column to DateType
+        # -------------------------------------------------------------
+        if "created_ts" in df_new.columns:
+            # Fix malformed dd-MM-yyyy → yyyy-MM-dd
+            df_new = df_new.withColumn(
+                "created_ts",
+                regexp_replace(col("created_ts"), r"(\d{2})-(\d{2})-(\d{4})", r"\3-\2-\1")
+            )
+            # Parse as yyyy-MM-dd
+            df_new = df_new.withColumn("created_ts", to_date(col("created_ts"), "yyyy-MM-dd"))
+            # If still null, try dd-MM-yyyy
+            df_new = df_new.withColumn(
+                "created_ts",
+                when(col("created_ts").isNull(), to_date(col("created_ts"), "dd-MM-yyyy"))
+                .otherwise(col("created_ts"))
+            )
 
         # Add metadata
         df_new = (df_new.withColumn("source_system", lit(src["name"]))
@@ -148,7 +166,7 @@ def main():
 
     # Write Audit Errors (always write, even if empty)
     error_df = spark.createDataFrame(error_records, schema=error_schema) if error_records else spark.createDataFrame([], schema=error_schema)
-    error_df.write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_errors"])
+    error_df.write.format("delta").mode("overwrite").option("mergeSchema","true").save(paths["audit_errors"])
 
     # Write Audit Lineage
     lineage_df = spark.createDataFrame(lineage_records, schema=lineage_schema) if lineage_records else spark.createDataFrame([], schema=lineage_schema)
