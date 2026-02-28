@@ -11,7 +11,8 @@
             "sensitive_fields": [
                 "email",
                 "phone"
-            ]
+            ],
+            "similarity_threshold": 95
         },
         {
             "name": "ERP",
@@ -23,7 +24,8 @@
             ],
             "sensitive_fields": [
                 "customer_id"
-            ]
+            ],
+            "similarity_threshold": 95
         },
         {
             "name": "Salesforce",
@@ -34,7 +36,8 @@
             ],
             "sensitive_fields": [
                 "email"
-            ]
+            ],
+            "similarity_threshold": 97
         },
         {
             "name": "SAP",
@@ -46,7 +49,8 @@
             ],
             "sensitive_fields": [
                 "customer_id"
-            ]
+            ],
+            "similarity_threshold": 95
         }
     ]
 }
