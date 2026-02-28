@@ -1,43 +1,31 @@
 customer_id,first_name,last_name,email,phone,address,city,country,created_ts
-ERP2001,Ravi,Kumar,ravi.kumar@example.com,9123456780,12 MG Rd,Bangalore,India,2026-02-01   <-------------------- original
-ERP2006,Ravi,Kumar,ravi.kumar@example.com,9123456780,12 MG Rd,Bangalore,India,2026-02-06   <------------ duplicate
-ERP2010,Ravi,Kumar,ravi.kumar@example.com,9123456780,12 MG Rd,Bangalore,India,2026-02-10   <------------ duplicate
-ERP2015,Ravi,Kumar,ravi.kumar@example.com,9123456780,12 MG Rd,Bangalore,India,2026-02-15   <------------ duplicate
-
-ERP2002,Meera,Joshi,meera.joshi@example.com,9123456781,45 Hill St,Mumbai,India,2026-02-02   <-------------------- original
-ERP2007,Meera,Joshi,meera.joshi@example.com,9123456781,45 Hill St,Mumbai,India,2026-02-07   <------------ duplicate
-ERP2012,Meera,Joshi,meera.joshi@example.com,9123456781,45 Hill St,Mumbai,India,2026-02-12   <------------ duplicate
-
-ERP2003,Anil,Shah,anil.shah@example.com,9123456782,88 Lake View,Delhi,India,2026-02-03   <-------------------- original
-ERP2013,Anil,Shah,anil.shah@example.com,9123456782,88 Lake View,Delhi,India,2026-02-13   <------------ duplicate
-
-ERP2004,Kavita,Menon,kavita.menon@example.com,9123456783,22 Rose St,Pune,India,2026-02-04   <-------------------- original
-ERP2008,Kavita,Menon,kavita.menon@example.com,9123456783,22 Rose St,Pune,India,2026-02-08   <------------ duplicate
-ERP2014,Kavita,Menon,kavita.menon@example.com,9123456783,22 Rose St,Pune,India,2026-02-14   <------------ duplicate
-
-ERP2005,Sunil,Patil,sunil.patil@example.com,9123456784,77 Lotus Rd,Chennai,India,2026-02-05   <-------------------- original
-ERP2009,Sunil,Patil,sunil.patil@example.com,9123456784,77 Lotus Rd,Chennai,India,2026-02-09   <------------ duplicate
-ERP2011,Sunil,Patil,sunil.patil@example.com,9123456784,77 Lotus Rd,Chennai,India,2026-02-11   <------------ duplicate
-ERP2016,Sunil,Patil,sunil.patil@example.com,9123456784,77 Lotus Rd,Chennai,India,2026-02-16   <------------ duplicate
-
-ERP2017,Ravi,Kumar,ravi.kumar@example.com,9123456780,12 MG Rd,Bangalore,India,2026-02-17   <------------ duplicate
-ERP2018,Meera,Joshi,meera.joshi@example.com,9123456781,45 Hill St,Mumbai,India,2026-02-17   <------------ duplicate
-ERP2019,Kavita,Menon,kavita.menon@example.com,9123456783,22 Rose St,Pune,India,2026-02-17   <------------ duplicate
-ERP2020,Sunil,Patil,sunil.patil@example.com,9123456784,77 Lotus Rd,Chennai,India,2026-02-17   <------------ duplicate
-
-ERP2025,Neha,Gupta,neha.gupta@example.com,9123456785,55 Cedar St,Jaipur,India,2026-02-20   <-------------------- original
-ERP2026,Arjun,Patel,arjun.patel@example.com,9123456786,44 Palm Rd,Ahmedabad,India,2026-02-20   <-------------------- original
-
-ERP2027,Ravi,Kumar,ravi.kumar@example.com,9123456780,12 MG Rd,Bangalore,India,2026-02-20   <------------ duplicate
-ERP2028,Meera,Joshi,meera.joshi@example.com,9123456781,45 Hill St,Mumbai,India,2026-02-20   <------------ duplicate
-ERP2029,Kavita,Menon,kavita.menon@example.com,9123456783,22 Rose St,Pune,India,2026-02-20   <------------ duplicate
-ERP2030,Sunil,Patil,sunil.patil@example.com,9123456784,77 Lotus Rd,Chennai,India,2026-02-20   <------------ duplicate
-
-ERP2031,Ravi,Kumar,ravi.kumar@example.com,9123456780,12 MG Rd,Bangalore,India,2026-02-21   <------------ duplicate
-ERP2032,Neha,Gupta,neha.gupta@example.com,9123456785,55 Cedar St,Jaipur,India,2026-02-21   <------------ duplicate
-
-ERP2033,Ravi,Kumar,ravi.kumar@example.com,9123456780,12 MG Rd,Bangalore,India,2026-02-22
-ERP2034,Neha,Gupta,neha.gupta@example.com,9123456785,55 Cedar St,Jaipur,India,2026-02-22
-
-ERP2035,Ravi,Kumar,ravi.kumar@example.com,9123456780,12 MG Rd,Bangalore,India,2026-02-23
-ERP2036,Neha,Gupta,neha.gupta@example.com,9123456785,55 Cedar St,Jaipur,India,2026-02-23
+ERP2001,Jon,Do,jon.do@example.com,9876543210,12 MG Rd,Bangalore,India,2026-02-01
+ERP2002,Meera,Joshi,meera.joshi@example.com,9123456781,45 Hill St,Mumbai,India,2026-02-02
+ERP2003,Anil,Shah,anil.shah@example.com,9123456782,88 Lake View,Delhi,India,2026-02-03
+ERP2004,Kavita,Menon,kavita.menon@example.com,9123456783,22 Rose St,Pune,India,2026-02-04
+ERP2005,Sunil,Patil,sunil.patil@example.com,9123456784,77 Lotus Rd,Chennai,India,2026-02-05
+ERP2006,Ravi,Kumar,ravi.kumar@example.com,9123456780,12 MG Rd,Bangalore,India,2026-02-06
+ERP2007,Meera,Joshi,meera.joshi@example.com,9123456781,45 Hill St,Mumbai,India,2026-02-07
+ERP2008,Kavita,Menon,kavita.menon@example.com,9123456783,22 Rose St,Pune,India,2026-02-08
+ERP2009,Sunil,Patil,sunil.patil@example.com,9123456784,77 Lotus Rd,Chennai,India,2026-02-09
+ERP2010,Ravi,Kumar,ravi.kumar@example.com,9123456780,12 MG Rd,Bangalore,India,2026-02-10
+ERP2011,Sunil,Patil,sunil.patil@example.com,9123456784,77 Lotus Rd,Chennai,India,2026-02-11
+ERP2012,Meera,Joshi,meera.joshi@example.com,9123456781,45 Hill St,Mumbai,India,2026-02-12
+ERP2013,Anil,Shah,anil.shah@example.com,9123456782,88 Lake View,Delhi,India,2026-02-13
+ERP2014,Kavita,Menon,kavita.menon@example.com,9123456783,22 Rose St,Pune,India,2026-02-14
+ERP2015,Ravi,Kumaar,ravi.kumaar@example.com,9123456780,12 MG Rd,Bangalore,India,2026-02-15
+ERP2016,Sunil,Patil,sunil.patil@example.com,9123456784,77 Lotus Rd,Chennai,India,2026-02-16
+ERP2017,Meera,Joshee,meera.joshee@example.com,9123456781,45 Hill St,Mumbai,India,2026-02-17
+ERP2018,Kavitha,Menon,kavitha.menon@example.com,9123456783,22 Rose St,Pune,India,2026-02-18
+ERP2019,Anil,Shah,anil.shah77@example.com,9123456782,88 Lake View,Delhi,India,2026-02-19
+ERP2020,Ravi,Kumar,ravi.kumar88@example.com,9123456780,12 MG Rd,Bangalore,India,2026-02-20
+ERP2021,Sunil,Patil,sunil.patil99@example.com,9123456784,77 Lotus Rd,Chennai,India,2026-02-21
+ERP2022,Meera,Joshi,meera.joshi55@example.com,9123456781,45 Hill St,Mumbai,India,2026-02-22
+ERP2023,Kavita,Menon,kavita.menon44@example.com,9123456783,22 Rose St,Pune,India,2026-02-23
+ERP2024,Anil,Shah,anil.shah33@example.com,9123456782,88 Lake View,Delhi,India,2026-02-24
+ERP2025,Ravi,Kumar,ravi.kumar22@example.com,9123456780,12 MG Rd,Bangalore,India,2026-02-25
+ERP2026,Sunil,Patil,sunil.patil11@example.com,9123456784,77 Lotus Rd,Chennai,India,2026-02-26
+ERP2027,Meera,Joshi,meera.joshi99@example.com,9123456781,45 Hill St,Mumbai,India,2026-02-27
+ERP2028,Kavita,Menon,kavita.menon88@example.com,9123456783,22 Rose St,Pune,India,2026-02-28
+ERP2029,Anil,Shah,anil.shah66@example.com,9123456782,88 Lake View,Delhi,India,2026-02-28
+ERP2030,Ravi,Kumar,ravi.kumar55@example.com,9123456780,12 MG Rd,Bangalore,India,2026-02-28
