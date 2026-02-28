@@ -5,7 +5,7 @@
 import json, uuid
 from datetime import datetime
 from pyspark.sql import Window
-from pyspark.sql.functions import col, row_number, lit, current_timestamp, to_date
+from pyspark.sql.functions import col, row_number, lit, current_timestamp, to_date, regexp_replace, when
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType, TimestampType, LongType
 
 # -------------------------------------------------------------
@@ -29,6 +29,21 @@ def dedupe_source(src, run_id, error_records, lineage_records):
         # Read RAW Delta table
         raw_path = paths["raw_" + src["name"].lower()]
         df_raw = spark.read.format("delta").load(raw_path)
+
+        # ---------------------------------------------------------
+        # Normalize created_ts to DateType
+        # ---------------------------------------------------------
+        if "created_ts" in df_raw.columns:
+            df_raw = df_raw.withColumn(
+                "created_ts",
+                regexp_replace(col("created_ts"), r"(\d{2})-(\d{2})-(\d{4})", r"\3-\2-\1")
+            )
+            df_raw = df_raw.withColumn("created_ts", to_date(col("created_ts"), "yyyy-MM-dd"))
+            df_raw = df_raw.withColumn(
+                "created_ts",
+                when(col("created_ts").isNull(), to_date(col("created_ts"), "dd-MM-yyyy"))
+                .otherwise(col("created_ts"))
+            )
 
         # Window spec for ranking (dedupe keys from sources.json)
         dedupe_keys = src.get("dedupe_keys", ["customer_id"])
@@ -58,18 +73,11 @@ def dedupe_source(src, run_id, error_records, lineage_records):
         # ---------------------------------------------------------
         # Production-grade write pattern
         # ---------------------------------------------------------
-        # Snapshot mode: overwrite ensures latest run only
         df_main.write.format("delta").mode("overwrite").option("mergeSchema","true") \
             .partitionBy("ingestion_date").save(bronze_main_path)
 
         df_conflicted.write.format("delta").mode("overwrite").option("mergeSchema","true") \
             .partitionBy("ingestion_date").save(bronze_conflicted_path)
-
-        # Optional: Historical mode (append with run_id partitioning)
-        # Uncomment if you want to keep conflicts per run
-        # df_conflicted.withColumn("run_id", lit(run_id)) \
-        #     .write.format("delta").mode("append").option("mergeSchema","true") \
-        #     .partitionBy("run_id").save(bronze_conflicted_path)
 
         load_type = "DEDUP"
 
@@ -166,9 +174,9 @@ def main():
     audit_df = spark.createDataFrame(audit_records, schema=audit_schema)
     audit_df.write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_runs"])
 
-    # Write Audit Errors
+    # Write Audit Errors (overwrite mode now)
     error_df = spark.createDataFrame(error_records, schema=error_schema) if error_records else spark.createDataFrame([], schema=error_schema)
-    error_df.write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_errors"])
+    error_df.write.format("delta").mode("overwrite").option("mergeSchema","true").save(paths["audit_errors"])
 
     # Write Audit Lineage
     lineage_df = spark.createDataFrame(lineage_records, schema=lineage_schema) if lineage_records else spark.createDataFrame([], schema=lineage_schema)
@@ -185,5 +193,3 @@ def main():
 # Entry Point
 # -------------------------------------------------------------
 main()
-
-# So with your current setup: Main stays at 28, Conflicted stays at 1556, and neither will increase just by rerunning. Only new ingested records will change those counts.
