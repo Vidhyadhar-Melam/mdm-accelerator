@@ -1,49 +1,31 @@
 customer_id,first_name,last_name,email,phone,address,city,country,created_ts
-CRM1001,John,Doe,john.doe@example.com,9876543210,123 Main St,Bangalore,India,2026-02-01   <-------------------- original
-CRM1006,John,Doe,john.doe@example.com,9876543210,123 Main St,Bangalore,India,2026-02-06   <------------ duplicate
-CRM1010,John,Doe,john.doe@example.com,9876543210,123 Main St,Bangalore,India,2026-02-10   <------------ duplicate
-CRM1015,John,Doe,john.doe@example.com,9876543210,123 Main St,Bangalore,India,2026-02-15   <------------ duplicate
-
-CRM1002,Jane,Smith,jane.smith@example.com,9876543211,456 Oak Ave,Mumbai,India,2026-02-02   <-------------------- original
-CRM1007,Jane,Smith,jane.smith@example.com,9876543211,456 Oak Ave,Mumbai,India,2026-02-07   <------------ duplicate
-CRM1012,Jane,Smith,jane.smith@example.com,9876543211,456 Oak Ave,Mumbai,India,2026-02-12   <------------ duplicate
-
-CRM1003,Jon,Do,jon.do@example.com,9876543210,123 Main St,Bangalore,India,2026-02-03   <-------------------- original
-CRM1013,Jon,Do,jon.do@example.com,9876543210,123 Main St,Bangalore,India,2026-02-13   <------------ duplicate
-
-CRM1004,Rahul,Sharma,rahul.sharma@example.com,9876543212,789 Pine Rd,Delhi,India,2026-02-04   <-------------------- original
-CRM1008,Rahul,Sharma,rahul.sharma@example.com,9876543212,789 Pine Rd,Delhi,India,2026-02-08   <------------ duplicate
-CRM1014,Rahul,Sharma,rahul.sharma@example.com,9876543212,789 Pine Rd,Delhi,India,2026-02-14   <------------ duplicate
-
-CRM1005,Amit,Verma,amit.verma@example.com,9876543213,101 Maple Blvd,Pune,India,2026-02-05   <-------------------- original
-CRM1009,Amit,Verma,amit.verma@example.com,9876543213,101 Maple Blvd,Pune,India,2026-02-09   <------------ duplicate
-CRM1011,Amit,Verma,amit.verma@example.com,9876543213,101 Maple Blvd,Pune,India,2026-02-11   <------------ duplicate
-CRM1016,Amit,Verma,amit.verma@example.com,9876543213,101 Maple Blvd,Pune,India,2026-02-16   <------------ duplicate
-
-CRM1017,John,Doe,john.doe@example.com,9876543210,123 Main St,Bangalore,India,2026-02-17   <------------ duplicate
-CRM1018,Jane,Smith,jane.smith@example.com,9876543211,456 Oak Ave,Mumbai,India,2026-02-17   <------------ duplicate
-CRM1019,Rahul,Sharma,rahul.sharma@example.com,9876543212,789 Pine Rd,Delhi,India,2026-02-17   <------------ duplicate
-CRM1020,Amit,Verma,amit.verma@example.com,9876543213,101 Maple Blvd,Pune,India,2026-02-17   <------------ duplicate
-
-CRM1021,John,Doe,john.doe@example.com,9876543210,123 Main St,Bangalore,India,2026-02-18   <------------ duplicate
-CRM1022,Jane,Smith,jane.smith@example.com,9876543211,456 Oak Ave,Mumbai,India,2026-02-18   <------------ duplicate
-
-CRM1023,John,Doe,john.doe@example.com,9876543210,123 Main St,Bangalore,India,2026-02-19   <------------ duplicate
-CRM1024,Jane,Smith,jane.smith@example.com,9876543211,456 Oak Ave,Mumbai,India,2026-02-19   <------------ duplicate
-
-CRM1025,Neha,Gupta,neha.gupta@example.com,9876543214,55 Cedar St,Jaipur,India,2026-02-20   <-------------------- original
-CRM1026,Arjun,Patel,arjun.patel@example.com,9876543215,44 Palm Rd,Ahmedabad,India,2026-02-20   <-------------------- original
-
-CRM1027,John,Doe,john.doe@example.com,9876543210,123 Main St,Bangalore,India,2026-02-20   <------------ duplicate
-CRM1028,Jane,Smith,jane.smith@example.com,9876543211,456 Oak Ave,Mumbai,India,2026-02-20   <------------ duplicate
-CRM1029,Rahul,Sharma,rahul.sharma@example.com,9876543212,789 Pine Rd,Delhi,India,2026-02-20   <------------ duplicate
-CRM1030,Amit,Verma,amit.verma@example.com,9876543213,101 Maple Blvd,Pune,India,2026-02-20   <------------ duplicate
-
-CRM1031,John,Doe,john.doe@example.com,9876543210,123 Main St,Bangalore,India,2026-02-21   <------------ duplicate
-CRM1032,Neha,Gupta,neha.gupta@example.com,9876543214,55 Cedar St,Jaipur,India,2026-02-21   <------------ duplicate
-
-CRM1033,John,Doe,john.doe@example.com,9876543210,123 Main St,Bangalore,India,2026-02-22   <------------ duplicate
-CRM1034,Neha,Gupta,neha.gupta@example.com,9876543214,55 Cedar St,Jaipur,India,2026-02-22   <------------ duplicate
-
-CRM1035,John,Doe,john.doe@example.com,9876543210,123 Main St,Bangalore,India,2026-02-23
-CRM1036,Neha,Gupta,neha.gupta@example.com,9876543214,55 Cedar St,Jaipur,India,2026-02-23
+CRM1001,John,Doe,john.doe@example.com,9876543210,123 Main St,Bangalore,India,2026-02-01
+CRM1002,Jane,Smith,jane.smith@example.com,9876543211,456 Oak Ave,Mumbai,India,2026-02-02
+CRM1003,Rahul,Sharma,rahul.sharma@example.com,9876543212,789 Pine Rd,Delhi,India,2026-02-03
+CRM1004,Amit,Verma,amit.verma@example.com,9876543213,101 Maple Blvd,Pune,India,2026-02-04
+CRM1005,Neha,Gupta,neha.gupta@example.com,9876543214,55 Cedar St,Jaipur,India,2026-02-05
+CRM1006,Arjun,Patel,arjun.patel@example.com,9876543215,44 Palm Rd,Ahmedabad,India,2026-02-06
+CRM1007,Meera,Joshi,meera.joshi@example.com,9876543216,77 Lotus Rd,Mumbai,India,2026-02-07
+CRM1008,Ravi,Kumar,ravi.kumar@example.com,9876543217,12 MG Rd,Bangalore,India,2026-02-08
+CRM1009,John,Doe,john.doe@example.com,9876543210,123 Main St,Bangalore,India,2026-02-09
+CRM1010,Jane,Smith,jane.smith@example.com,9876543211,456 Oak Ave,Mumbai,India,2026-02-10
+CRM1011,Rahul,Sharma,rahul.sharma@example.com,9876543212,789 Pine Rd,Delhi,India,2026-02-11
+CRM1012,Amit,Verma,amit.verma@example.com,9876543213,101 Maple Blvd,Pune,India,2026-02-12
+CRM1013,Neha,Gupta,neha.gupta@example.com,9876543214,55 Cedar St,Jaipur,India,2026-02-13
+CRM1014,Arjun,Patel,arjun.patel@example.com,9876543215,44 Palm Rd,Ahmedabad,India,2026-02-14
+CRM1015,Meera,Joshi,meera.joshi@example.com,9876543216,77 Lotus Rd,Mumbai,India,2026-02-15
+CRM1016,Ravi,Kumar,ravi.kumar@example.com,9876543217,12 MG Rd,Bangalore,India,2026-02-16
+CRM1017,Jon,Do,jon.do@example.com,9876543210,123 Main St,Bangalore,India,2026-02-17
+CRM1018,Jahn,Smith,jahn.smith@example.com,9876543211,456 Oak Ave,Mumbai,India,2026-02-18
+CRM1019,Rahool,Sharma,rahool.sharma@example.com,9876543212,789 Pine Rd,Delhi,India,2026-02-19
+CRM1020,Amit,Vermaa,amit.vermaa@example.com,9876543213,101 Maple Blvd,Pune,India,2026-02-20
+CRM1021,Neha,Guptha,neha.guptha@example.com,9876543214,55 Cedar St,Jaipur,India,2026-02-21
+CRM1022,Arjun,Patil,arjun.patil22@example.com,9876543215,44 Palm Rd,Ahmedabad,India,2026-02-22
+CRM1023,Meera,Joshee,meera.joshee@example.com,9876543216,77 Lotus Rd,Mumbai,India,2026-02-23
+CRM1024,Ravi,Kumaar,ravi.kumaar@example.com,9876543217,12 MG Rd,Bangalore,India,2026-02-24
+CRM1025,John,Doe,john.doe99@example.com,9876543210,123 Main St,Bangalore,India,2026-02-25
+CRM1026,Jane,Smith,jane.smith88@example.com,9876543211,456 Oak Ave,Mumbai,India,2026-02-26
+CRM1027,Rahul,Sharma,rahul.sharma77@example.com,9876543212,789 Pine Rd,Delhi,India,2026-02-27
+CRM1028,Amit,Verma,amit.verma66@example.com,9876543213,101 Maple Blvd,Pune,India,2026-02-28
+CRM1029,Neha,Gupta,neha.gupta55@example.com,9876543214,55 Cedar St,Jaipur,India,2026-02-28
+CRM1030,Arjun,Patel,arjun.patel44@example.com,9876543215,44 Palm Rd,Ahmedabad,India,2026-02-28
