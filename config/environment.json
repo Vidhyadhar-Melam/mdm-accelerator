@@ -1,5 +1,5 @@
 {
-    "environment": "local",
-    "local_root": "storage",
+    "environment": "aws",
+    "s3_root": "s3://databricks-amz-s3-bucket/mdm-accelerator",
     "databricks_root": "/mnt"
 }
