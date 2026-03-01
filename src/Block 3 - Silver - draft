@@ -1,4 +1,4 @@
-# Block 3 – Silver Layer (Global Dedup + Survivorship + Multi-Blocking Keys + Similarity)
+# Block 3 – Silver Layer (Global Dedup + Survivorship + Similarity Integration)
 
 import json, uuid
 from datetime import datetime
@@ -9,7 +9,6 @@ from pyspark.sql.functions import (
 from pyspark.sql.types import (
     StructType, StructField, StringType, TimestampType, LongType, DoubleType
 )
-from delta.tables import DeltaTable
 from difflib import SequenceMatcher
 
 # -------------------------------------------------------------
@@ -24,7 +23,7 @@ paths   = json.loads(dbutils.fs.head(paths_path, 100000))
 env     = json.loads(dbutils.fs.head(env_path, 100000))
 
 # -------------------------------------------------------------
-# Similarity UDF (fuzzy matching)
+# Similarity UDF
 # -------------------------------------------------------------
 def multi_similarity(name1, name2, email1, email2, phone1, phone2, id1, id2):
     score = 0
@@ -42,18 +41,7 @@ from pyspark.sql.functions import udf
 similarity_udf = udf(multi_similarity, DoubleType())
 
 # -------------------------------------------------------------
-# Error Schema
-# -------------------------------------------------------------
-silver_error_schema = StructType([
-    StructField("run_id", StringType(), True),
-    StructField("source_system", StringType(), True),
-    StructField("error_message", StringType(), True),
-    StructField("error_time", TimestampType(), True),
-    StructField("environment", StringType(), True)
-])
-
-# -------------------------------------------------------------
-# Load all Bronze Main tables (union fix)
+# Load all Bronze Main tables
 # -------------------------------------------------------------
 def load_all_bronze_main():
     dfs = []
@@ -69,99 +57,86 @@ def load_all_bronze_main():
     return df_all
 
 # -------------------------------------------------------------
-# Global Silver Dedup + Survivorship
+# Global Silver Dedup + Survivorship + Similarity
 # -------------------------------------------------------------
 def global_silver(run_id, lineage_records):
-    try:
-        start_time = datetime.now()
-        df_all = load_all_bronze_main()
-        print("Initial Bronze union count:", df_all.count())
+    start_time = datetime.now()
+    df_all = load_all_bronze_main()
+    print("Initial Bronze union count:", df_all.count())
 
-        # ---------------- Data Quality Checks ----------------
-        df_all = df_all.filter(col("customer_id").isNotNull())
-        df_all = df_all.filter(col("email").isNotNull())
-        df_all = df_all.filter(col("phone").isNotNull())
-        df_all = df_all.filter(col("email").rlike("^[^@]+@[^@]+\\.[^@]+$"))
-        df_all = df_all.filter(col("phone").rlike("^[0-9+\\- ]{7,20}$"))
+    # Quality checks
+    df_all = df_all.filter(col("customer_id").isNotNull()) \
+                   .filter(col("email").isNotNull()) \
+                   .filter(col("phone").isNotNull()) \
+                   .filter(col("email").rlike("^[^@]+@[^@]+\\.[^@]+$")) \
+                   .filter(col("phone").rlike("^[0-9+\\- ]{7,20}$"))
 
-        # Normalize created_ts
-        if "created_ts" in df_all.columns:
-            df_all = df_all.withColumn("created_ts", to_date(col("created_ts"), "yyyy-MM-dd"))
-        else:
-            df_all = df_all.withColumn("created_ts", col("ingestion_ts"))
+    if "created_ts" in df_all.columns:
+        df_all = df_all.withColumn("created_ts", to_date(col("created_ts"), "yyyy-MM-dd"))
+    else:
+        df_all = df_all.withColumn("created_ts", col("ingestion_ts"))
 
-        print("After quality checks:", df_all.count())
+    print("After quality checks:", df_all.count())
 
-        # ---------------- Multi-Blocking Keys ----------------
-        df_all = df_all.withColumn("blocking_email", substring_index(col("email"), "@", -1))
-        df_all = df_all.withColumn("blocking_phone", col("phone").substr(1,3))
-        df_all = df_all.withColumn("blocking_name", soundex(col("first_name")))
+    # Blocking keys
+    df_all = df_all.withColumn("blocking_email", substring_index(col("email"), "@", -1)) \
+                   .withColumn("blocking_phone", col("phone").substr(1,3)) \
+                   .withColumn("blocking_name", soundex(col("first_name")))
 
-        # ---------------- Survivorship Rules ----------------
-        priority_expr = when(col("source_system")=="Salesforce",1) \
-                        .when(col("source_system")=="ERP",2) \
-                        .when(col("source_system")=="CRM",3) \
-                        .when(col("source_system")=="SAP",4) \
-                        .otherwise(5)
+    # Survivorship rules
+    priority_expr = when(col("source_system")=="Salesforce",1) \
+                    .when(col("source_system")=="ERP",2) \
+                    .when(col("source_system")=="CRM",3) \
+                    .when(col("source_system")=="SAP",4) \
+                    .otherwise(5)
 
-        w = Window.partitionBy("blocking_email","blocking_phone","blocking_name") \
-                  .orderBy(priority_expr.asc(), col("created_ts").desc())
-        df_ranked = df_all.withColumn("rank", row_number().over(w))
+    w = Window.partitionBy("blocking_email","blocking_phone","blocking_name") \
+              .orderBy(priority_expr.asc(), col("created_ts").desc())
+    df_ranked = df_all.withColumn("rank", row_number().over(w))
 
-        df_main = df_ranked.filter(col("rank")==1).drop("rank")
-        df_conflicted = df_ranked.filter(col("rank")>1).drop("rank")
+    df_main = df_ranked.filter(col("rank")==1).drop("rank")
+    df_conflicted = df_ranked.filter(col("rank")>1).drop("rank")
 
-        print("Silver Main count (before similarity):", df_main.count())
-        print("Silver Conflicted count (before similarity):", df_conflicted.count())
+    print("Silver Main count (before similarity):", df_main.count())
+    print("Silver Conflicted count (before similarity):", df_conflicted.count())
 
-        # ---------------- Similarity Matching ----------------
-        joined = df_conflicted.alias("conf").join(
-            df_main.alias("main"),
-            on=["blocking_email","blocking_phone","blocking_name"], how="inner"
-        )
-        joined = joined.withColumn("similarity", similarity_udf(
-            col("conf.first_name"), col("main.first_name"),
-            col("conf.email"), col("main.email"),
-            col("conf.phone"), col("main.phone"),
-            col("conf.customer_id"), col("main.customer_id")
-        ))
+    # Similarity check: decide Conflicted vs Main
+    joined = df_conflicted.alias("conf").join(
+        df_main.alias("main"),
+        on=["blocking_email","blocking_phone","blocking_name"], how="inner"
+    )
+    joined = joined.withColumn("similarity", similarity_udf(
+        col("conf.first_name"), col("main.first_name"),
+        col("conf.email"), col("main.email"),
+        col("conf.phone"), col("main.phone"),
+        col("conf.customer_id"), col("main.customer_id")
+    ))
 
-        threshold = 80  # lower threshold to catch more duplicates
-        df_conflicted = joined.where(col("similarity") >= threshold).select("conf.*")
-        print("Silver Conflicted count (after similarity):", df_conflicted.count())
+    threshold = 80
+    df_conflicted_after = joined.where(col("similarity") >= threshold).select("conf.*")
+    df_new_main = joined.where(col("similarity") < threshold).select("conf.*")
 
-        # ---------------- SCD Type 2 ----------------
-        now = datetime.now()
-        df_main = (df_main.withColumn("valid_from", lit(now))
-                            .withColumn("valid_to", lit(None).cast(TimestampType()))
-                            .withColumn("is_current", lit(True)))
-        df_conflicted = (df_conflicted.withColumn("valid_from", lit(now))
-                                    .withColumn("valid_to", lit(None).cast(TimestampType()))
-                                    .withColumn("is_current", lit(True)))
+    # Add new records to Silver Main
+    df_main_final = df_main.unionByName(df_new_main, allowMissingColumns=True)
+    df_conflicted_final = df_conflicted_after
 
-        # ---------------- Write Outputs ----------------
-        silver_main_path = f"{paths['silver_main']}/global"
-        silver_conflicted_path = f"{paths['silver_conflicted']}/global"
+    print("Silver Main count (after similarity):", df_main_final.count())
+    print("Silver Conflicted count (after similarity):", df_conflicted_final.count())
 
-        df_main.write.format("delta").mode("overwrite").option("mergeSchema","true") \
-            .partitionBy("source_system").save(silver_main_path)
-        df_conflicted.write.format("delta").mode("overwrite").option("mergeSchema","true") \
-            .partitionBy("source_system").save(silver_conflicted_path)
+    # Write outputs
+    silver_main_path = f"{paths['silver_main']}/global"
+    silver_conflicted_path = f"{paths['silver_conflicted']}/global"
 
-        # ---------------- Audit Logging ----------------
-        lineage_records.append((run_id,"GLOBAL",paths["bronze_main"],silver_main_path,datetime.now(),
-                                df_all.count(),df_main.count(),df_conflicted.count(),env["environment"],"GLOBAL_SURVIVORSHIP"))
+    df_main_final.write.format("delta").mode("overwrite").option("mergeSchema","true") \
+        .partitionBy("source_system").save(silver_main_path)
+    df_conflicted_final.write.format("delta").mode("overwrite").option("mergeSchema","true") \
+        .partitionBy("source_system").save(silver_conflicted_path)
 
-        return df_main.count(), df_conflicted.count()
+    lineage_records.append((run_id,"GLOBAL",paths["bronze_main"],silver_main_path,datetime.now(),
+                            df_all.count(),df_main_final.count(),df_conflicted_final.count(),
+                            env["environment"],"GLOBAL_SURVIVORSHIP+SIMILARITY"))
 
-    except Exception as e:
-        error_df = spark.createDataFrame(
-            [(run_id,"GLOBAL",str(e),datetime.now(),env["environment"])],
-            silver_error_schema
-        )
-        error_df.write.format("delta").mode("append").save(paths["silver_error"])
-        print("Error in global_silver:", e)
-        return 0,0
+    return df_main_final.count(), df_conflicted_final.count()
 
 # -------------------------------------------------------------
 # Entry Point
@@ -197,7 +172,7 @@ def main():
     audit_df = spark.createDataFrame(audit_data, schema=audit_schema)
     audit_df.write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_runs"])
 
-        # ---------------- Audit Lineage ----------------
+    # ---------------- Audit Lineage ----------------
     lineage_schema = StructType([
         StructField("run_id", StringType(), True),
         StructField("source_system", StringType(), True),
@@ -215,14 +190,13 @@ def main():
     lineage_df.write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_lineage"])
 
     print(f"Silver Global complete. Run ID={run_id}, Clean={clean_count}, Conflicted={conflicted_count}, Duration={job_duration}s")
-    # Expect Clean≈25, Conflicted≈95
 
-    # Validation: Show audit tables
+    # ---------------- Validation ----------------
     display(spark.read.format("delta").load(paths["audit_runs"]))
     display(spark.read.format("delta").load(paths["audit_lineage"]))
 
 # -------------------------------------------------------------
 # Entry Point Trigger
-# -------------------------------------------------------------
+# ------------------------------------------------
 if __name__ == "__main__":
     main()
