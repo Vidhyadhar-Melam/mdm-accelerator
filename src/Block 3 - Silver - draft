@@ -24,6 +24,8 @@ env     = json.loads(dbutils.fs.head(env_path, 100000))
 
 # -------------------------------------------------------------
 # Similarity UDF
+# Define a UDF to calculate similarity score based on name, email, phone, and customer ID 
+# Used later to decide if conflicted records are distinct enough to promote
 # -------------------------------------------------------------
 def multi_similarity(name1, name2, email1, email2, phone1, phone2, id1, id2):
     score = 0
@@ -42,6 +44,7 @@ similarity_udf = udf(multi_similarity, DoubleType())
 
 # -------------------------------------------------------------
 # Load all Bronze Main tables
+# Load Bronze Main tables from all sources and union them into one global dataset # This enables cross-system deduplication
 # -------------------------------------------------------------
 def load_all_bronze_main():
     dfs = []
@@ -84,14 +87,18 @@ def global_silver(run_id, lineage_records):
                    .withColumn("blocking_name", soundex(col("first_name")))
 
     # Survivorship rules
+    # Apply survivorship rules to collapse duplicates across systems # Priority: Salesforce > ERP > CRM > SAP # Tie-breaker: latest created_ts
     priority_expr = when(col("source_system")=="Salesforce",1) \
                     .when(col("source_system")=="ERP",2) \
                     .when(col("source_system")=="CRM",3) \
                     .when(col("source_system")=="SAP",4) \
                     .otherwise(5)
 
+    # Define window for ranking based on blocking keys and survivorship rules
     w = Window.partitionBy("blocking_email","blocking_phone","blocking_name") \
               .orderBy(priority_expr.asc(), col("created_ts").desc())
+    
+    # Assign rank and split into Silver Main (rank=1) and Silver Conflicted (rank>1)
     df_ranked = df_all.withColumn("rank", row_number().over(w))
 
     df_main = df_ranked.filter(col("rank")==1).drop("rank")
@@ -101,6 +108,8 @@ def global_silver(run_id, lineage_records):
     print("Silver Conflicted count (before similarity):", df_conflicted.count())
 
     # Similarity check: decide Conflicted vs Main
+    # Join conflicted records with Silver Main on blocking keys 
+    # Apply similarity scoring to determine if records are distinct
     joined = df_conflicted.alias("conf").join(
         df_main.alias("main"),
         on=["blocking_email","blocking_phone","blocking_name"], how="inner"
@@ -112,11 +121,18 @@ def global_silver(run_id, lineage_records):
         col("conf.customer_id"), col("main.customer_id")
     ))
 
+    # Apply similarity UDF and split based on threshold
     threshold = 80
     df_conflicted_after = joined.where(col("similarity") >= threshold).select("conf.*")
     df_new_main = joined.where(col("similarity") < threshold).select("conf.*")
 
-    # Add new records to Silver Main
+    # -------------------------------------------------------------
+    # Conflict Handling Logic
+    # -------------------------------------------------------------
+    # Finalize Silver Main and Silver Conflicted datasets 
+    # Silver Main = original survivors + promoted distinct records 
+    # Silver Conflicted = unresolved records flagged for steward review
+
     df_main_final = df_main.unionByName(df_new_main, allowMissingColumns=True)
     df_conflicted_final = df_conflicted_after
 
@@ -126,6 +142,11 @@ def global_silver(run_id, lineage_records):
     # Write outputs
     silver_main_path = f"{paths['silver_main']}/global"
     silver_conflicted_path = f"{paths['silver_conflicted']}/global"
+
+    # -------------------------------------------------------------
+    # Write Silver Outputs
+    # -------------------------------------------------------------
+    # Save Silver Main and Silver Conflicted to Delta tables
 
     df_main_final.write.format("delta").mode("overwrite").option("mergeSchema","true") \
         .partitionBy("source_system").save(silver_main_path)
@@ -168,6 +189,11 @@ def main():
 
     audit_data = [(run_id, job_name, job_start, job_end, job_duration,
                    clean_count, conflicted_count, env["environment"])]
+    # ------------------------------------------------------------- 
+    # Audit Logging Logic 
+    # -------------------------------------------------------------
+    # Record run metadata in audit_runs and audit_lineage tables 
+    # Includes counts, timestamps, environment, and load type
 
     audit_df = spark.createDataFrame(audit_data, schema=audit_schema)
     audit_df.write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_runs"])
@@ -192,6 +218,7 @@ def main():
     print(f"Silver Global complete. Run ID={run_id}, Clean={clean_count}, Conflicted={conflicted_count}, Duration={job_duration}s")
 
     # ---------------- Validation ----------------
+    # Display audit tables for verification and steward visibility
     display(spark.read.format("delta").load(paths["audit_runs"]))
     display(spark.read.format("delta").load(paths["audit_lineage"]))
 
