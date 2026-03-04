@@ -62,9 +62,10 @@ def ingest_source(src, run_id, error_records, lineage_records):
                         .withColumn("ingestion_ts", current_timestamp())
                         .withColumn("run_id", lit(run_id)))
 
-        # Resolve raw path from paths.json
-        raw_key = f"raw_{src['name'].lower()}_{src['entity'].lower()}"
-        raw_path = paths[raw_key]
+        # Build raw path: storage-v2/raw/<system>/<system>_<entity>
+        system = src['name'].lower()
+        entity = src['entity'].lower()
+        raw_path = f"s3://databricks-amz-s3-bucket/mdm-accelerator/storage-v2/raw/{system}/{system}_{entity}"
 
         # Append new records (keep full history in raw)
         (df_new.write.format("delta")
