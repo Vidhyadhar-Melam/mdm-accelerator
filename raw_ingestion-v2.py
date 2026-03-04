@@ -1,11 +1,12 @@
-# Raw Ingestion Script (Databricks, Config-Driven, Delta Lake, Append for History)
+# Raw Ingestion Script (Databricks, Config-Driven, Delta Lake, Append for History + Data Quality)
 # ------------------------------------------------------------------------------
 # Features:
 # - Reads schemas dynamically from schemas.json
 # - Append-only ingestion (no drop/recreate)
 # - Safe casting with try_to_date
 # - Metadata columns added automatically
-# - Audit tables capture run details, errors, and lineage
+# - Audit tables capture run details, errors, lineage
+# - Data Quality validation rules logged in audit_dq
 # ------------------------------------------------------------------------------
 
 import json, uuid
@@ -49,9 +50,21 @@ def load_schema_from_config(schema_key, config):
     return StructType(struct_fields)
 
 # -------------------------------------------------------------
-# Ingest function (append-only)
+# Data Quality schema
 # -------------------------------------------------------------
-def ingest_source(src, run_id, error_records, lineage_records):
+dq_schema = StructType([
+    StructField("run_id", StringType(), True),
+    StructField("source_system", StringType(), True),
+    StructField("rule_name", StringType(), True),
+    StructField("issue_count", LongType(), True),
+    StructField("dq_time", TimestampType(), True),
+    StructField("environment", StringType(), True)
+])
+
+# -------------------------------------------------------------
+# Ingest function (append-only + DQ validation)
+# -------------------------------------------------------------
+def ingest_source(src, run_id, error_records, lineage_records, dq_records):
     try:
         start_time = datetime.now()
         schema_key = f"{src['name'].lower()}_{src['entity'].lower()}"
@@ -76,24 +89,46 @@ def ingest_source(src, run_id, error_records, lineage_records):
                         .withColumn("ingestion_ts", current_timestamp())
                         .withColumn("run_id", lit(run_id)))
 
-        # Build raw path
-        system = src['name'].lower()
-        entity = src['entity'].lower()
-        raw_path = f"s3://databricks-amz-s3-bucket/mdm-accelerator/storage-v2/raw/{system}/{system}_{entity}"
+        # -----------------------------
+        # Data Quality Checks
+        # -----------------------------
+        dq_issues = []
 
-        # Append only
+        # Rule 1: customer_id must not be null
+        if "customer_id" in df_new.columns:
+            null_ids = df_new.filter(col("customer_id").isNull()).count()
+            if null_ids > 0:
+                dq_issues.append(("customer_id_null", null_ids))
+
+        # Rule 2: amount must be > 0
+        if "amount" in df_new.columns:
+            bad_amounts = df_new.filter(col("amount") <= 0).count()
+            if bad_amounts > 0:
+                dq_issues.append(("amount_nonpositive", bad_amounts))
+
+        # Rule 3: created_ts must not be in the future
+        if "created_ts" in df_new.columns:
+            future_dates = df_new.filter(col("created_ts") > current_timestamp()).count()
+            if future_dates > 0:
+                dq_issues.append(("created_ts_future", future_dates))
+
+        # Log DQ issues
+        for issue, count in dq_issues:
+            dq_records.append((run_id, f"{src['name']}_{src['entity']}", issue, count, datetime.now(), env["environment"]))
+
+        # -----------------------------
+        # Write to Raw Delta
+        # -----------------------------
+        raw_path = f"s3://databricks-amz-s3-bucket/mdm-accelerator/storage-v2/raw/{src['name'].lower()}/{src['name'].lower()}_{src['entity'].lower()}"
         df_new.write.format("delta").mode("append").save(raw_path)
-        load_type = "APPEND"
 
         end_time = datetime.now()
         duration = (end_time - start_time).total_seconds()
-
         lineage_records.append((run_id, f"{src['name']}_{src['entity']}", src["path"], raw_path,
-                                start_time, end_time, env["environment"], load_type))
-        return int(df_new.count()), 0, "SUCCESS", start_time, end_time, float(duration), load_type
+                                start_time, end_time, env["environment"], "APPEND"))
+        return int(df_new.count()), 0, "SUCCESS", start_time, end_time, float(duration), "APPEND"
 
     except Exception as e:
-        print(f"Error ingesting {src['name']} {src['entity']}: {e}")
         error_records.append((run_id, f"{src['name']}_{src['entity']}", str(e), datetime.now(), env["environment"]))
         return 0, 0, "FAILED", datetime.now(), datetime.now(), 0.0, "FAILED"
 
@@ -106,11 +141,11 @@ def main():
     job_start = datetime.now()
 
     total_loaded, total_rejected = 0, 0
-    audit_records, error_records, lineage_records = [], [], []
+    audit_records, error_records, lineage_records, dq_records = [], [], [], []
     overall_status = "SUCCESS"
 
     for src in sources:
-        loaded, rejected, status, start_time, end_time, duration, load_type = ingest_source(src, run_id, error_records, lineage_records)
+        loaded, rejected, status, start_time, end_time, duration, load_type = ingest_source(src, run_id, error_records, lineage_records, dq_records)
         total_loaded += loaded
         total_rejected += rejected
         if status == "FAILED":
@@ -162,7 +197,7 @@ def main():
         StructField("load_type", StringType(), True)
     ])
 
-    # -------------------------------------------------------------
+        # -------------------------------------------------------------
     # Write Audit tables (append mode for history)
     # -------------------------------------------------------------
     audit_df = spark.createDataFrame(audit_records, schema=audit_schema)
@@ -174,6 +209,12 @@ def main():
     lineage_df = spark.createDataFrame(lineage_records, schema=lineage_schema) if lineage_records else spark.createDataFrame([], schema=lineage_schema)
     lineage_df.write.format("delta").mode("append").save(paths["audit_lineage"])
 
+    # -------------------------------------------------------------
+    # Write Data Quality audit table (append mode)
+    # -------------------------------------------------------------
+    dq_df = spark.createDataFrame(dq_records, schema=dq_schema) if dq_records else spark.createDataFrame([], schema=dq_schema)
+    dq_df.write.format("delta").mode("append").save(paths["audit_dq"])
+
     print(f"Ingestion complete. Run ID={run_id}, Loaded={total_loaded}, Rejected={total_rejected}, Status={overall_status}")
 
     # -------------------------------------------------------------
@@ -182,6 +223,7 @@ def main():
     display(spark.read.format("delta").load(paths["audit_runs"]))
     display(spark.read.format("delta").load(paths["audit_errors"]))
     display(spark.read.format("delta").load(paths["audit_lineage"]))
+    display(spark.read.format("delta").load(paths["audit_dq"]))
 
 # -------------------------------------------------------------
 # Entry Point
