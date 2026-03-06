@@ -78,10 +78,6 @@ similarity_udf = udf(multi_similarity, DoubleType())
 # Entity-specific quality checks
 # -------------------------------------------------------------
 def apply_quality_checks(df, entity):
-    """
-    Apply validation rules per entity type.
-    Ensures only valid records flow into Silver.
-    """
     if entity.lower() == "customer":
         return df.filter(col("customer_id").isNotNull()) \
                  .filter(col("email").isNotNull()) \
@@ -100,16 +96,12 @@ def apply_quality_checks(df, entity):
         return df.filter(col("contact_id").isNotNull()) \
                  .filter(col("contact_value").isNotNull())
     else:
-        return df  # default: no extra checks
+        return df
 
 # -------------------------------------------------------------
 # Load all Bronze Main tables
 # -------------------------------------------------------------
 def load_all_bronze_main():
-    """
-    Load Bronze Main tables from all sources/entities,
-    apply quality checks, and union them into one DataFrame.
-    """
     dfs = []
     for src in sources:
         bronze_main_path = f"{paths['bronze_main']}/{src['name'].lower()}/{src['entity'].lower()}"
@@ -125,10 +117,6 @@ def load_all_bronze_main():
 # Deduplication per entity
 # -------------------------------------------------------------
 def dedup_entity(df, entity):
-    """
-    Deduplicate records for a given entity using entity-specific blocking keys.
-    Returns Silver Main and Silver Conflicted DataFrames.
-    """
     if entity.lower() == "customer":
         df = df.withColumn("norm_email", lower(col("email"))) \
                .withColumn("norm_phone", regexp_replace(col("phone"), "[^0-9]", "")) \
@@ -164,7 +152,6 @@ def dedup_entity(df, entity):
             col("conf.postal_code"), col("main.postal_code"),
             col("conf.address_id"), col("main.address_id")
         )
-
 
     elif entity.lower() == "transactions":
         df = df.withColumn("blocking_txn", col("transaction_id")) \
@@ -229,9 +216,6 @@ def dedup_entity(df, entity):
 # Global Silver Dedup + Survivorship + Similarity
 # -------------------------------------------------------------
 def global_silver(run_id):
-    """
-    Deduplicate and standardize records across all entities.
-    """
     df_all = load_all_bronze_main()
     print("Initial Bronze union count:", df_all.count())
 
