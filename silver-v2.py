@@ -73,7 +73,7 @@ def load_all_bronze_main():
 # -------------------------------------------------------------
 # Global Silver Dedup + Survivorship + Similarity
 # -------------------------------------------------------------
-def global_silver(run_id, lineage_records):
+def global_silver(run_id):
     start_time = datetime.now()
     df_all = load_all_bronze_main()
     print("Initial Bronze union count:", df_all.count())
@@ -145,11 +145,9 @@ def global_silver(run_id, lineage_records):
     df_conflicted_final.write.format("delta").mode("overwrite").option("mergeSchema","true") \
         .partitionBy("source_system").save(silver_conflicted_path)
 
-    lineage_records.append((run_id,"GLOBAL",paths["bronze_main"],silver_main_path,datetime.now(),
-                            df_all.count(),df_main_final.count(),df_conflicted_final.count(),
-                            env["environment"],"GLOBAL_SURVIVORSHIP+SIMILARITY"))
+    # Return counts and paths so main() can use them
+    return df_all.count(), df_main_final.count(), df_conflicted_final.count(), silver_main_path
 
-    return df_main_final.count(), df_conflicted_final.count()
 
 # -------------------------------------------------------------
 # Entry Point
@@ -159,8 +157,7 @@ def main():
     job_name = "Silver-Global"
     job_start = datetime.now()
 
-    lineage_records = []
-    clean_count, conflicted_count = global_silver(run_id, lineage_records)
+    total_count, clean_count, conflicted_count, silver_main_path = global_silver(run_id)
 
     job_end = datetime.now()
     job_duration = (job_end - job_start).total_seconds()
@@ -171,20 +168,24 @@ def main():
     audit_schema = load_schema_from_config("audit", schema_config)
     lineage_schema = load_schema_from_config("lineage", schema_config)
 
-    # Audit record (11 fields, matching schemas.json)
+    # Audit record (11 fields)
     audit_data = [(run_id, job_name, "GLOBAL", job_start, job_end, job_duration,
                    clean_count, 0, env["environment"], "SUCCESS", "GLOBAL_SURVIVORSHIP+SIMILARITY")]
 
     audit_df = spark.createDataFrame(audit_data, schema=audit_schema)
     audit_df.write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_runs"])
 
-    # Lineage records
-    lineage_df = spark.createDataFrame(lineage_records, schema=lineage_schema)
+    # Lineage record (8 fields)
+    lineage_data = [(run_id, "GLOBAL", paths["bronze_main"], silver_main_path,
+                     job_start, job_end, env["environment"], "GLOBAL_SURVIVORSHIP+SIMILARITY")]
+
+    lineage_df = spark.createDataFrame(lineage_data, schema=lineage_schema)
     lineage_df.write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_lineage"])
 
     # ---------------- Validation ----------------
     display(spark.read.format("delta").load(paths["audit_runs"]))
     display(spark.read.format("delta").load(paths["audit_lineage"]))
+
 
 # -------------------------------------------------------------
 # Entry Point Trigger
