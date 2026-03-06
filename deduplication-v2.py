@@ -158,7 +158,7 @@ def main():
     job_name = "Raw-to-Bronze-Dedup"
     job_start = datetime.now()
 
-    total_main, total_conflicted = 0, 0
+    new_main, new_conflicted = 0, 0
     audit_records, error_records, lineage_records, checkpoint_updates = [], [], [], []
     overall_status = "SUCCESS"
 
@@ -166,8 +166,8 @@ def main():
         main_count, conflicted_count, status, start_time, end_time, duration, load_type = dedupe_source(
             src, run_id, error_records, lineage_records, checkpoint_updates
         )
-        total_main += main_count
-        total_conflicted += conflicted_count
+        new_main += main_count
+        new_conflicted += conflicted_count
         if status == "FAILED":
             overall_status = "FAILED"
 
@@ -182,19 +182,16 @@ def main():
     # Job summary
     audit_records.append((
         run_id, job_name, "JOB_SUMMARY", job_start, job_end,
-        float(job_duration), int(total_main), int(total_conflicted),
+        float(job_duration), int(new_main), int(new_conflicted),
         env["environment"], overall_status, "SUMMARY"
     ))
 
-        # Schemas
+    # Schemas
     audit_schema   = load_schema_from_config("audit", schema_config)
     error_schema   = load_schema_from_config("error", schema_config)
     lineage_schema = load_schema_from_config("lineage", schema_config)
 
     # Write Audit tables
-    spark.createDataFrame(audit_records, schema=audit_schema) \
-        .write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_runs"])
-
     spark.createDataFrame(error_records, schema=error_schema) \
         .write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_errors"])
 
@@ -207,7 +204,23 @@ def main():
         spark.createDataFrame(checkpoint_updates, schema=checkpoint_schema) \
             .write.format("delta").mode(mode).option("mergeSchema","true").save(checkpoint_path)
 
-    print(f"Deduplication complete. Run ID={run_id}, Main={total_main}, Conflicted={total_conflicted}, Status={overall_status}")
+    # Compute totals from Bronze tables
+    total_main_records = 0
+    total_conflicted_records = 0
+    try:
+        for src in sources:
+            bronze_main_path = f"{paths['bronze_main']}/{src['name'].lower()}/{src['entity'].lower()}"
+            bronze_conflicted_path = f"{paths['bronze_conflicted']}/{src['name'].lower()}/{src['entity'].lower()}"
+            total_main_records += spark.read.format("delta").load(bronze_main_path).count()
+            total_conflicted_records += spark.read.format("delta").load(bronze_conflicted_path).count()
+    except:
+        pass  # if Bronze is empty on first run
+
+    # Final output
+    print(f"Deduplication complete. Run ID={run_id}")
+    print(f"New Main={new_main}, New Conflicted={new_conflicted}")
+    print(f"Total Main={total_main_records}, Total Conflicted={total_conflicted_records}")
+    print(f"Status={overall_status}")
 
     # Validation
     display(spark.read.format("delta").load(paths["audit_runs"]))
