@@ -1,11 +1,12 @@
-# Block 2: Self-Deduplication (RAW Delta → Bronze Delta)
-# Production-grade: Snapshot tables + Audit history
+# Block 2: Deduplication (RAW Delta → Bronze Delta)
+# Production-grade: Snapshot tables + Audit history + Checkpoint table
 # Config-driven, Audit-enabled, Delta Lake
+# Supports reset_mode flag in environment.json
 
 import json, uuid
 from datetime import datetime
 from pyspark.sql import Window
-from pyspark.sql.functions import col, row_number, lit, current_timestamp, to_date, regexp_replace, when
+from pyspark.sql.functions import col, row_number, lit, current_timestamp, to_date
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType, TimestampType, LongType
 
 # -------------------------------------------------------------
@@ -21,6 +22,9 @@ paths   = json.loads(dbutils.fs.head(paths_path, 100000))
 env     = json.loads(dbutils.fs.head(env_path, 100000))
 schema_config = json.loads(dbutils.fs.head(schema_config_path, 100000))
 
+# Reset mode flag
+reset_mode = env.get("reset_mode", False)
+
 # -------------------------------------------------------------
 # Dynamic schema loader
 # -------------------------------------------------------------
@@ -28,7 +32,7 @@ def load_schema_from_config(schema_key, config):
     type_map = {
         "string": StringType(),
         "double": DoubleType(),
-        "date": TimestampType(),  # normalize dates to timestamp for dedup
+        "date": TimestampType(),   # normalize dates to timestamp
         "timestamp": TimestampType(),
         "long": LongType()
     }
@@ -37,47 +41,67 @@ def load_schema_from_config(schema_key, config):
     return StructType(struct_fields)
 
 # -------------------------------------------------------------
+# Checkpoint schema
+# -------------------------------------------------------------
+checkpoint_schema = StructType([
+    StructField("source_system", StringType(), True),
+    StructField("entity", StringType(), True),
+    StructField("last_ingestion_ts", TimestampType(), True),
+    StructField("last_run_id", StringType(), True),
+    StructField("last_run_ts", TimestampType(), True),
+    StructField("environment", StringType(), True)
+])
+
+checkpoint_path = f"{paths['checkpoints']}/dedup_checkpoint"
+
+# -------------------------------------------------------------
 # Helper: Deduplicate a source system
 # -------------------------------------------------------------
-def dedupe_source(src, run_id, error_records, lineage_records):
+def dedupe_source(src, run_id, error_records, lineage_records, checkpoint_updates):
     try:
         start_time = datetime.now()
 
-        # Build raw path key dynamically: raw_<system>_<entity>
         raw_key = f"raw_{src['name'].lower()}_{src['entity'].lower()}"
         if raw_key not in paths:
             raise Exception(f"Missing path for {raw_key} in paths.json")
         raw_path = paths[raw_key]
 
-        # Read RAW Delta table
         df_raw = spark.read.format("delta").load(raw_path)
-
         if df_raw.count() == 0:
             raise Exception("Empty RAW dataset")
 
-        # Normalize created_ts if present
-        if "created_ts" in df_raw.columns:
-            df_raw = df_raw.withColumn(
-                "created_ts",
-                regexp_replace(col("created_ts"), r"(\d{2})-(\d{2})-(\d{4})", r"\3-\2-\1")
-            )
-            df_raw = df_raw.withColumn("created_ts", to_date(col("created_ts"), "yyyy-MM-dd"))
+        # Checkpoint lookup (skip if reset_mode = true)
+        last_run_ts = None
+        if not reset_mode:
+            try:
+                df_checkpoint = spark.read.format("delta").load(checkpoint_path)
+                last_run_ts_row = df_checkpoint.filter(
+                    (col("source_system") == src["name"]) & (col("entity") == src["entity"])
+                ).agg({"last_ingestion_ts": "max"}).collect()
+                if last_run_ts_row and last_run_ts_row[0][0] is not None:
+                    last_run_ts = last_run_ts_row[0][0]
+            except:
+                last_run_ts = None
 
-        # Deduplication keys from config
+        # Filter records
+        df_new = df_raw.filter(col("ingestion_ts") > last_run_ts) if last_run_ts else df_raw
+        if df_new.count() == 0:
+            print(f"No new records for {src['name']}_{src['entity']}")
+            return 0, 0, "SUCCESS", start_time, datetime.now(), 0.0, "NO_NEW"
+
+        # Deduplication keys
         dedupe_keys = src.get("dedupe_keys", ["customer_id"])
         for key in dedupe_keys:
-            if key not in df_raw.columns:
+            if key not in df_new.columns:
                 raise Exception(f"Dedup key {key} missing in RAW data")
 
-        # Window spec for ranking
         w = Window.partitionBy(*dedupe_keys).orderBy(col("ingestion_ts").desc())
-        df_ranked = df_raw.withColumn("rank", row_number().over(w))
+        df_ranked = df_new.withColumn("rank", row_number().over(w))
 
-        # Split into main bronze and conflicted bronze
         df_main = df_ranked.filter(col("rank") == 1).drop("rank")
         df_conflicted = df_ranked.filter(col("rank") > 1).drop("rank")
 
-        # Add metadata
+        # Metadata
         df_main = (df_main.withColumn("bronze_type", lit("MAIN"))
                            .withColumn("dedupe_run_id", lit(run_id))
                            .withColumn("dedupe_ts", current_timestamp())
@@ -88,21 +112,19 @@ def dedupe_source(src, run_id, error_records, lineage_records):
                                      .withColumn("dedupe_ts", current_timestamp())
                                      .withColumn("ingestion_date", to_date(col("ingestion_ts"))))
 
-        # Dynamic subfolder paths
         bronze_main_path = f"{paths['bronze_main']}/{src['name'].lower()}/{src['entity'].lower()}"
         bronze_conflicted_path = f"{paths['bronze_conflicted']}/{src['name'].lower()}/{src['entity'].lower()}"
 
-        # ---------------------------------------------------------
-        # Production-grade write pattern (append + partition)
-        # ---------------------------------------------------------
-        df_main.write.format("delta").mode("append").option("mergeSchema","true") \
-            .partitionBy("ingestion_date").save(bronze_main_path)
-
-        df_conflicted.write.format("delta").mode("append").option("mergeSchema","true") \
-            .partitionBy("ingestion_date").save(bronze_conflicted_path)
+        # Write pattern
+        mode = "overwrite" if reset_mode else "append"
+        if df_main.count() > 0:
+            df_main.write.format("delta").mode(mode).option("mergeSchema","true") \
+                .partitionBy("ingestion_date").save(bronze_main_path)
+        if df_conflicted.count() > 0:
+            df_conflicted.write.format("delta").mode(mode).option("mergeSchema","true") \
+                .partitionBy("ingestion_date").save(bronze_conflicted_path)
 
         load_type = "DEDUP"
-
         end_time = datetime.now()
         duration = (end_time - start_time).total_seconds()
 
@@ -110,6 +132,12 @@ def dedupe_source(src, run_id, error_records, lineage_records):
         lineage_records.append((
             run_id, f"{src['name']}_{src['entity']}", raw_path, bronze_main_path,
             start_time, end_time, env["environment"], load_type
+        ))
+
+        # Update checkpoint
+        max_ingestion_ts = df_new.agg({"ingestion_ts": "max"}).collect()[0][0]
+        checkpoint_updates.append((
+            src["name"], src["entity"], max_ingestion_ts, run_id, end_time, env["environment"]
         ))
 
         return int(df_main.count()), int(df_conflicted.count()), "SUCCESS", start_time, end_time, float(duration), load_type
@@ -130,20 +158,18 @@ def main():
     job_start = datetime.now()
 
     total_main, total_conflicted = 0, 0
-    audit_records = []
-    error_records = []
-    lineage_records = []
+    audit_records, error_records, lineage_records, checkpoint_updates = [], [], [], []
     overall_status = "SUCCESS"
 
     for src in sources:
-        main_count, conflicted_count, status, start_time, end_time, duration, load_type = dedupe_source(src, run_id, error_records, lineage_records)
+        main_count, conflicted_count, status, start_time, end_time, duration, load_type = dedupe_source(
+            src, run_id, error_records, lineage_records, checkpoint_updates
+        )
         total_main += main_count
         total_conflicted += conflicted_count
-
         if status == "FAILED":
             overall_status = "FAILED"
 
-        # Per-source audit record
         audit_records.append((
             run_id, job_name, f"{src['name']}_{src['entity']}", start_time, end_time,
             float(duration), int(main_count), int(conflicted_count), env["environment"], status, load_type
@@ -152,38 +178,41 @@ def main():
     job_end = datetime.now()
     job_duration = (job_end - job_start).total_seconds()
 
-    # Job-level summary
+    # Job summary
     audit_records.append((
         run_id, job_name, "JOB_SUMMARY", job_start, job_end,
         float(job_duration), int(total_main), int(total_conflicted),
         env["environment"], overall_status, "SUMMARY"
     ))
 
-    # -------------------------------------------------------------
-    # Load audit schemas dynamically from config
-    # -------------------------------------------------------------
+        # Schemas
     audit_schema   = load_schema_from_config("audit", schema_config)
     error_schema   = load_schema_from_config("error", schema_config)
     lineage_schema = load_schema_from_config("lineage", schema_config)
 
-    # -------------------------------------------------------------
-    # Write Audit tables (append mode for history)
-    # -------------------------------------------------------------
-    audit_df = spark.createDataFrame(audit_records, schema=audit_schema)
-    audit_df.write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_runs"])
+    # Write Audit tables
+    spark.createDataFrame(audit_records, schema=audit_schema) \
+        .write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_runs"])
 
-    error_df = spark.createDataFrame(error_records, schema=error_schema) if error_records else spark.createDataFrame([], schema=error_schema)
-    error_df.write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_errors"])
+    spark.createDataFrame(error_records, schema=error_schema) \
+        .write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_errors"])
 
-    lineage_df = spark.createDataFrame(lineage_records, schema=lineage_schema) if lineage_records else spark.createDataFrame([], schema=lineage_schema)
-    lineage_df.write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_lineage"])
+    spark.createDataFrame(lineage_records, schema=lineage_schema) \
+        .write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_lineage"])
+
+    # Write checkpoint updates
+    if checkpoint_updates:
+        mode = "overwrite" if reset_mode else "append"
+        spark.createDataFrame(checkpoint_updates, schema=checkpoint_schema) \
+            .write.format("delta").mode(mode).option("mergeSchema","true").save(checkpoint_path)
 
     print(f"Deduplication complete. Run ID={run_id}, Main={total_main}, Conflicted={total_conflicted}, Status={overall_status}")
 
-    # Validation: Show audit tables
+    # Validation
     display(spark.read.format("delta").load(paths["audit_runs"]))
     display(spark.read.format("delta").load(paths["audit_errors"]))
     display(spark.read.format("delta").load(paths["audit_lineage"]))
+    display(spark.read.format("delta").load(checkpoint_path))
 
 # -------------------------------------------------------------
 # Entry Point
