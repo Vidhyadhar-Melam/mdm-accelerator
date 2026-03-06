@@ -9,6 +9,7 @@ from pyspark.sql.types import (
     StructType, StructField, StringType, TimestampType, LongType, DoubleType
 )
 from difflib import SequenceMatcher
+from pyspark.sql.functions import udf
 
 # -------------------------------------------------------------
 # Load Configs
@@ -53,7 +54,6 @@ def multi_similarity(name1, name2, email1, email2, phone1, phone2, id1, id2):
         score += 0.1 * 100
     return score
 
-from pyspark.sql.functions import udf
 similarity_udf = udf(multi_similarity, DoubleType())
 
 # -------------------------------------------------------------
@@ -167,14 +167,13 @@ def main():
 
     print(f"Silver Global complete. Run ID={run_id}, Clean={clean_count}, Conflicted={conflicted_count}, Duration={job_duration}s")
 
-        # ---------------- Audit Runs ----------------
+    # ---------------- Audit Runs ----------------
     audit_schema = load_schema_from_config("audit", schema_config)
     lineage_schema = load_schema_from_config("lineage", schema_config)
 
     # Audit record (11 fields, matching schemas.json)
     audit_data = [(run_id, job_name, "GLOBAL", job_start, job_end, job_duration,
-               clean_count, 0, env["environment"], "SUCCESS", "GLOBAL_SURVIVORSHIP+SIMILARITY")]
-
+                   clean_count, 0, env["environment"], "SUCCESS", "GLOBAL_SURVIVORSHIP+SIMILARITY")]
 
     audit_df = spark.createDataFrame(audit_data, schema=audit_schema)
     audit_df.write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_runs"])
@@ -182,7 +181,6 @@ def main():
     # Lineage records
     lineage_df = spark.createDataFrame(lineage_records, schema=lineage_schema)
     lineage_df.write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_lineage"])
-
 
     # ---------------- Validation ----------------
     display(spark.read.format("delta").load(paths["audit_runs"]))
