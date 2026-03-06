@@ -57,6 +57,32 @@ def multi_similarity(name1, name2, email1, email2, phone1, phone2, id1, id2):
 similarity_udf = udf(multi_similarity, DoubleType())
 
 # -------------------------------------------------------------
+# Entity-specific quality checks
+# -------------------------------------------------------------
+def apply_quality_checks(df, entity):
+    if entity.lower() == "customer":
+        return df.filter(col("customer_id").isNotNull()) \
+                 .filter(col("email").isNotNull()) \
+                 .filter(col("phone").isNotNull()) \
+                 .filter(col("email").rlike("^[^@]+@[^@]+\\.[^@]+$")) \
+                 .filter(col("phone").rlike("^[0-9+\\- ]{7,20}$"))
+    elif entity.lower() == "account":
+        return df.filter(col("account_id").isNotNull()) \
+                 .filter(col("account_name").isNotNull())
+    elif entity.lower() == "address":
+        return df.filter(col("address_id").isNotNull()) \
+                 .filter(col("postal_code").isNotNull())
+    elif entity.lower() == "transactions":
+        return df.filter(col("transaction_id").isNotNull()) \
+                 .filter(col("amount").isNotNull()) \
+                 .filter(col("currency").isNotNull())
+    elif entity.lower() == "contacts":
+        return df.filter(col("contact_id").isNotNull()) \
+                 .filter(col("contact_value").isNotNull())
+    else:
+        return df  # default: no extra checks
+
+# -------------------------------------------------------------
 # Load all Bronze Main tables
 # -------------------------------------------------------------
 def load_all_bronze_main():
@@ -64,6 +90,7 @@ def load_all_bronze_main():
     for src in sources:
         bronze_main_path = f"{paths['bronze_main']}/{src['name'].lower()}/{src['entity'].lower()}"
         df = spark.read.format("delta").load(bronze_main_path)
+        df = apply_quality_checks(df, src["entity"])
         dfs.append(df)
     df_all = dfs[0]
     for df in dfs[1:]:
@@ -78,13 +105,6 @@ def global_silver(run_id):
     df_all = load_all_bronze_main()
     print("Initial Bronze union count:", df_all.count())
 
-    # Quality checks
-    df_all = df_all.filter(col("customer_id").isNotNull()) \
-                   .filter(col("email").isNotNull()) \
-                   .filter(col("phone").isNotNull()) \
-                   .filter(col("email").rlike("^[^@]+@[^@]+\\.[^@]+$")) \
-                   .filter(col("phone").rlike("^[0-9+\\- ]{7,20}$"))
-
     if "created_ts" in df_all.columns:
         df_all = df_all.withColumn("created_ts", to_date(col("created_ts")))
     else:
@@ -92,46 +112,51 @@ def global_silver(run_id):
 
     print("After quality checks:", df_all.count())
 
-    # Blocking keys
-    df_all = df_all.withColumn("blocking_email", substring_index(col("email"), "@", -1)) \
-                   .withColumn("blocking_phone", col("phone").substr(1,3)) \
-                   .withColumn("blocking_name", soundex(col("first_name")))
+    # Blocking keys (only for entities with name/email/phone)
+    if "email" in df_all.columns and "phone" in df_all.columns and "first_name" in df_all.columns:
+        df_all = df_all.withColumn("blocking_email", substring_index(col("email"), "@", -1)) \
+                       .withColumn("blocking_phone", col("phone").substr(1,3)) \
+                       .withColumn("blocking_name", soundex(col("first_name")))
 
-    # Survivorship rules
-    priority_expr = when(col("source_system")=="Salesforce",1) \
-                    .when(col("source_system")=="ERP",2) \
-                    .when(col("source_system")=="CRM",3) \
-                    .when(col("source_system")=="SAP",4) \
-                    .otherwise(5)
+        # Survivorship rules
+        priority_expr = when(col("source_system")=="Salesforce",1) \
+                        .when(col("source_system")=="ERP",2) \
+                        .when(col("source_system")=="CRM",3) \
+                        .when(col("source_system")=="SAP",4) \
+                        .otherwise(5)
 
-    w = Window.partitionBy("blocking_email","blocking_phone","blocking_name") \
-              .orderBy(priority_expr.asc(), col("created_ts").desc())
+        w = Window.partitionBy("blocking_email","blocking_phone","blocking_name") \
+                  .orderBy(priority_expr.asc(), col("created_ts").desc())
 
-    df_ranked = df_all.withColumn("rank", row_number().over(w))
-    df_main = df_ranked.filter(col("rank")==1).drop("rank")
-    df_conflicted = df_ranked.filter(col("rank")>1).drop("rank")
+        df_ranked = df_all.withColumn("rank", row_number().over(w))
+        df_main = df_ranked.filter(col("rank")==1).drop("rank")
+        df_conflicted = df_ranked.filter(col("rank")>1).drop("rank")
 
-    print("Silver Main count (before similarity):", df_main.count())
-    print("Silver Conflicted count (before similarity):", df_conflicted.count())
+        print("Silver Main count (before similarity):", df_main.count())
+        print("Silver Conflicted count (before similarity):", df_conflicted.count())
 
-    # Similarity check
-    joined = df_conflicted.alias("conf").join(
-        df_main.alias("main"),
-        on=["blocking_email","blocking_phone","blocking_name"], how="inner"
-    )
-    joined = joined.withColumn("similarity", similarity_udf(
-        col("conf.first_name"), col("main.first_name"),
-        col("conf.email"), col("main.email"),
-        col("conf.phone"), col("main.phone"),
-        col("conf.customer_id"), col("main.customer_id")
-    ))
+        # Similarity check
+        joined = df_conflicted.alias("conf").join(
+            df_main.alias("main"),
+            on=["blocking_email","blocking_phone","blocking_name"], how="inner"
+        )
+        joined = joined.withColumn("similarity", similarity_udf(
+            col("conf.first_name"), col("main.first_name"),
+            col("conf.email"), col("main.email"),
+            col("conf.phone"), col("main.phone"),
+            col("conf.customer_id"), col("main.customer_id")
+        ))
 
-    threshold = 80
-    df_conflicted_after = joined.where(col("similarity") >= threshold).select("conf.*")
-    df_new_main = joined.where(col("similarity") < threshold).select("conf.*")
+        threshold = 80
+        df_conflicted_after = joined.where(col("similarity") >= threshold).select("conf.*")
+        df_new_main = joined.where(col("similarity") < threshold).select("conf.*")
 
-    df_main_final = df_main.unionByName(df_new_main, allowMissingColumns=True)
-    df_conflicted_final = df_conflicted_after
+        df_main_final = df_main.unionByName(df_new_main, allowMissingColumns=True)
+        df_conflicted_final = df_conflicted_after
+    else:
+        # For non-customer entities, skip similarity/dedup
+        df_main_final = df_all
+        df_conflicted_final = spark.createDataFrame([], df_all.schema)
 
     print("Silver Main count (after similarity):", df_main_final.count())
     print("Silver Conflicted count (after similarity):", df_conflicted_final.count())
@@ -168,14 +193,14 @@ def main():
     audit_schema = load_schema_from_config("audit", schema_config)
     lineage_schema = load_schema_from_config("lineage", schema_config)
 
-    # Audit record (11 fields)
+    # Audit record (11 fields, matching schemas.json)
     audit_data = [(run_id, job_name, "GLOBAL", job_start, job_end, job_duration,
                    clean_count, 0, env["environment"], "SUCCESS", "GLOBAL_SURVIVORSHIP+SIMILARITY")]
 
     audit_df = spark.createDataFrame(audit_data, schema=audit_schema)
     audit_df.write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_runs"])
 
-    # Lineage record (8 fields)
+    # Lineage record (8 fields, matching schemas.json)
     lineage_data = [(run_id, "GLOBAL", paths["bronze_main"], silver_main_path,
                      job_start, job_end, env["environment"], "GLOBAL_SURVIVORSHIP+SIMILARITY")]
 
