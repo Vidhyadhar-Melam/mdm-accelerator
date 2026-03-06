@@ -2,6 +2,7 @@
 # Production-grade: Snapshot tables + Audit history + Checkpoint table
 # Config-driven, Audit-enabled, Delta Lake
 # Supports reset_mode flag in environment.json
+# Partitions Bronze by job run date
 
 import json, uuid
 from datetime import datetime
@@ -101,16 +102,16 @@ def dedupe_source(src, run_id, error_records, lineage_records, checkpoint_update
         df_main = df_ranked.filter(col("rank") == 1).drop("rank")
         df_conflicted = df_ranked.filter(col("rank") > 1).drop("rank")
 
-        # Metadata
+        # Metadata (partition by job run date)
         df_main = (df_main.withColumn("bronze_type", lit("MAIN"))
                            .withColumn("dedupe_run_id", lit(run_id))
                            .withColumn("dedupe_ts", current_timestamp())
-                           .withColumn("ingestion_date", to_date(col("ingestion_ts"))))
+                           .withColumn("ingestion_date", to_date(current_timestamp())))
 
         df_conflicted = (df_conflicted.withColumn("bronze_type", lit("CONFLICTED"))
                                      .withColumn("dedupe_run_id", lit(run_id))
                                      .withColumn("dedupe_ts", current_timestamp())
-                                     .withColumn("ingestion_date", to_date(col("ingestion_ts"))))
+                                     .withColumn("ingestion_date", to_date(current_timestamp())))
 
         bronze_main_path = f"{paths['bronze_main']}/{src['name'].lower()}/{src['entity'].lower()}"
         bronze_conflicted_path = f"{paths['bronze_conflicted']}/{src['name'].lower()}/{src['entity'].lower()}"
