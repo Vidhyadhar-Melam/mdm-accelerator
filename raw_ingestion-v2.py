@@ -1,4 +1,4 @@
-# Raw Ingestion Script (Databricks, Config-Driven, Delta Lake, Append for History + Data Quality + Partitioning by Ingestion Date + Config-driven Audit Schemas)
+# Raw Ingestion Script (Databricks, Config-Driven, Delta Lake, Append per Entity + Data Quality + Partitioning by Ingestion Date + Config-driven Audit Schemas)
 # ------------------------------------------------------------------------------
 
 import json, uuid
@@ -35,7 +35,7 @@ def load_schema_from_config(schema_key, config):
     return StructType(struct_fields)
 
 # -------------------------------------------------------------
-# Ingest function (append-only + DQ validation + partitioning)
+# Ingest function (append per entity + DQ validation + partitioning)
 # -------------------------------------------------------------
 def ingest_source(src, run_id, error_records, lineage_records, dq_records):
     try:
@@ -43,26 +43,19 @@ def ingest_source(src, run_id, error_records, lineage_records, dq_records):
         schema_key = f"{src['name'].lower()}_{src['entity'].lower()}"
         expected_schema = load_schema_from_config(schema_key, schema_config)
 
-        # Read CSV
+        # Read CSV for this entity
         df_new = spark.read.option("header", "true").option("delimiter", ",").csv(src["path"])
 
         # Cast columns consistently
         for field in expected_schema.fields:
             if field.name in df_new.columns:
-                if isinstance(field.dataType, StringType):
-                    df_new = df_new.withColumn(field.name, col(field.name).cast(StringType()))
-                if isinstance(field.dataType, DoubleType):
-                    df_new = df_new.withColumn(field.name, col(field.name).cast(DoubleType()))
-                if isinstance(field.dataType, DateType):
-                    df_new = df_new.withColumn(field.name, expr(f"try_to_date({field.name}, 'yyyy-MM-dd')"))
-                if isinstance(field.dataType, TimestampType):
-                    df_new = df_new.withColumn(field.name, expr(f"try_to_timestamp({field.name}, 'yyyy-MM-dd HH:mm:ss')"))
+                df_new = df_new.withColumn(field.name, col(field.name).cast(field.dataType))
 
         # Add metadata
         df_new = (df_new.withColumn("source_system", lit(src["name"]))
                         .withColumn("entity", lit(src["entity"]))
                         .withColumn("ingestion_ts", current_timestamp())
-                        .withColumn("ingestion_date", to_date(current_timestamp()))  # partition column
+                        .withColumn("ingestion_date", to_date(current_timestamp()))
                         .withColumn("run_id", lit(run_id)))
 
         # -----------------------------
@@ -86,17 +79,18 @@ def ingest_source(src, run_id, error_records, lineage_records, dq_records):
             dq_records.append((run_id, f"{src['name']}_{src['entity']}", issue, count, datetime.now(), env["environment"]))
 
         # -----------------------------
-        # Write to Raw Delta (partitioned by ingestion_date)
+        # Write to Raw Delta (append per entity)
         # -----------------------------
-        raw_path = f"s3://databricks-amz-s3-bucket/mdm-accelerator/storage-v2/raw/{src['name'].lower()}/{src['name'].lower()}_{src['entity'].lower()}"
+        raw_key = f"raw_{src['name'].lower()}_{src['entity'].lower()}"
+        raw_path = paths[raw_key]
         df_new.write.format("delta").mode("append").partitionBy("ingestion_date").save(raw_path)
 
         # Log lineage
         end_time = datetime.now()
-        duration = (end_time - start_time).total_seconds()
         lineage_records.append((run_id, f"{src['name']}_{src['entity']}", src["path"], raw_path,
                                 start_time, end_time, env["environment"], "APPEND"))
-        return int(df_new.count()), 0, "SUCCESS", start_time, end_time, float(duration), "APPEND"
+
+        return df_new.count(), 0, "SUCCESS", start_time, end_time, (end_time - start_time).total_seconds(), "APPEND"
 
     except Exception as e:
         error_records.append((run_id, f"{src['name']}_{src['entity']}", str(e), datetime.now(), env["environment"]))
@@ -157,9 +151,7 @@ def main():
     # Print job summary
     print(f"Ingestion complete. Run ID={run_id}, Loaded={total_loaded}, Rejected={total_rejected}, Status={overall_status}")
 
-    # -------------------------------------------------------------
-    # Validation: Show all audit tables fully
-    # -------------------------------------------------------------
+    # Validation: Show audit tables
     display(spark.read.format("delta").load(paths["audit_runs"]))
     display(spark.read.format("delta").load(paths["audit_errors"]))
     display(spark.read.format("delta").load(paths["audit_lineage"]))
