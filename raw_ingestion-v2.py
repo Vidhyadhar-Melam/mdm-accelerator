@@ -1,9 +1,9 @@
-# Raw Ingestion Script (Databricks, Config-Driven, Delta Lake, Append per Entity + Data Quality + Partitioning by Ingestion Date + Config-driven Audit Schemas)
+# Raw Ingestion Script (Databricks, Config-Driven, Delta Lake, Incremental + Idempotent per Entity + Data Quality + Partitioning by Ingestion Date + Config-driven Audit Schemas)
 # ------------------------------------------------------------------------------
 
 import json, uuid
 from datetime import datetime
-from pyspark.sql.functions import lit, current_timestamp, col, expr, to_date
+from pyspark.sql.functions import lit, current_timestamp, col, to_date
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType, DateType, TimestampType, LongType
 
 # -------------------------------------------------------------
@@ -35,7 +35,7 @@ def load_schema_from_config(schema_key, config):
     return StructType(struct_fields)
 
 # -------------------------------------------------------------
-# Ingest function (append per entity + DQ validation + partitioning)
+# Ingest function (MERGE for incremental + idempotent ingestion)
 # -------------------------------------------------------------
 def ingest_source(src, run_id, error_records, lineage_records, dq_records):
     try:
@@ -79,18 +79,37 @@ def ingest_source(src, run_id, error_records, lineage_records, dq_records):
             dq_records.append((run_id, f"{src['name']}_{src['entity']}", issue, count, datetime.now(), env["environment"]))
 
         # -----------------------------
-        # Write to Raw Delta (append per entity)
+        # Write to Raw Delta (MERGE for idempotency + incremental load)
         # -----------------------------
         raw_key = f"raw_{src['name'].lower()}_{src['entity'].lower()}"
         raw_path = paths[raw_key]
-        df_new.write.format("delta").mode("append").partitionBy("ingestion_date").save(raw_path)
+
+        # Extract natural keys from schema config
+        natural_keys = [f["name"] for f in schema_config["schemas"][schema_key]["fields"] if f.get("natural_key", False)]
+
+        if natural_keys:
+            # Build merge condition dynamically
+            merge_condition = " AND ".join([f"t.{k} = s.{k}" for k in natural_keys])
+            df_new.createOrReplaceTempView("s")
+            spark.sql(f"""
+                MERGE INTO delta.`{raw_path}` t
+                USING s
+                ON {merge_condition}
+                WHEN MATCHED THEN UPDATE SET *
+                WHEN NOT MATCHED THEN INSERT *
+            """)
+            load_type = "MERGE"
+        else:
+            # Fallback to append if no natural key defined
+            df_new.write.format("delta").mode("append").partitionBy("ingestion_date").save(raw_path)
+            load_type = "APPEND"
 
         # Log lineage
         end_time = datetime.now()
         lineage_records.append((run_id, f"{src['name']}_{src['entity']}", src["path"], raw_path,
-                                start_time, end_time, env["environment"], "APPEND"))
+                                start_time, end_time, env["environment"], load_type))
 
-        return df_new.count(), 0, "SUCCESS", start_time, end_time, (end_time - start_time).total_seconds(), "APPEND"
+        return df_new.count(), 0, "SUCCESS", start_time, end_time, (end_time - start_time).total_seconds(), load_type
 
     except Exception as e:
         error_records.append((run_id, f"{src['name']}_{src['entity']}", str(e), datetime.now(), env["environment"]))
