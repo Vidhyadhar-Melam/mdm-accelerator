@@ -99,6 +99,15 @@ def apply_quality_checks(df, entity):
         return df
 
 # -------------------------------------------------------------
+# Helper: get similarity threshold from sources.json
+# -------------------------------------------------------------
+def get_similarity_threshold(entity, source_system):
+    for src in sources:
+        if src["entity"].lower() == entity.lower() and src["name"].lower() == source_system.lower():
+            return src.get("similarity_threshold", 80)
+    return 80  # fallback if not found
+
+# -------------------------------------------------------------
 # Load all Bronze Main tables
 # -------------------------------------------------------------
 def load_all_bronze_main():
@@ -117,6 +126,7 @@ def load_all_bronze_main():
 # Deduplication per entity
 # -------------------------------------------------------------
 def dedup_entity(df, entity):
+    # Blocking + similarity expression setup (unchanged)
     if entity.lower() == "customer":
         df = df.withColumn("norm_email", lower(col("email"))) \
                .withColumn("norm_phone", regexp_replace(col("phone"), "[^0-9]", "")) \
@@ -131,7 +141,6 @@ def dedup_entity(df, entity):
             col("conf.email"), col("main.email"),
             col("conf.phone"), col("main.phone")
         )
-
     elif entity.lower() == "account":
         df = df.withColumn("blocking_account", soundex(col("account_name")))
         partition_cols = ["blocking_account"]
@@ -141,7 +150,6 @@ def dedup_entity(df, entity):
             col("conf.source_system"), col("main.source_system"),
             col("conf.created_ts"), col("main.created_ts")
         )
-
     elif entity.lower() == "address":
         df = df.withColumn("blocking_postal", col("postal_code")) \
                .withColumn("blocking_city", soundex(col("city")))
@@ -152,7 +160,6 @@ def dedup_entity(df, entity):
             col("conf.postal_code"), col("main.postal_code"),
             col("conf.address_id"), col("main.address_id")
         )
-
     elif entity.lower() == "transactions":
         df = df.withColumn("blocking_txn", col("transaction_id")) \
                .withColumn("blocking_date", to_date(col("transaction_date")))
@@ -163,7 +170,6 @@ def dedup_entity(df, entity):
             col("conf.currency"), col("main.currency"),
             col("conf.transaction_date"), col("main.transaction_date")
         )
-
     elif entity.lower() == "contacts":
         df = df.withColumn("blocking_contact", soundex(col("contact_value")))
         partition_cols = ["blocking_contact"]
@@ -173,7 +179,6 @@ def dedup_entity(df, entity):
             col("conf.source_system"), col("main.source_system"),
             col("conf.created_ts"), col("main.created_ts")
         )
-
     else:
         return df, spark.createDataFrame([], df.schema)
 
@@ -192,6 +197,9 @@ def dedup_entity(df, entity):
     df_main = df_ranked.filter(col("rank")==1).drop("rank")       # survivor
     df_conflicted = df_ranked.filter(col("rank")>1).drop("rank")  # duplicates
 
+    # Logging: Survivorship counts
+    print(f"[{entity}] Survivorship -> Main count: {df_main.count()}, Conflicted count: {df_conflicted.count()}")
+
     # Similarity check: compare conflicted vs main within same block
     joined = df_conflicted.alias("conf").join(
         df_main.alias("main"),
@@ -199,15 +207,24 @@ def dedup_entity(df, entity):
     )
     joined = joined.withColumn("similarity", sim_expr)
 
-    # Threshold: records with similarity >= 80 are considered duplicates (conflicted)
-    threshold = 80
+    # Use entity-specific threshold from sources.json
+    source_system_val = df.select("source_system").first()[0]
+    threshold = get_similarity_threshold(entity, source_system_val)
+
     df_conflicted_after = joined.where(col("similarity") >= threshold).select("conf.*")
     df_new_main = joined.where(col("similarity") < threshold).select("conf.*")
 
+    # Logging: Similarity counts
+    print(f"[{entity}] Similarity -> Conflicted before: {df_conflicted.count()}, "
+          f"Conflicted after: {df_conflicted_after.count()}, "
+          f"Promoted to Main: {df_new_main.count()}")
+
     # Final Silver Main = original survivors + new mains promoted by similarity
     df_main_final = df_main.unionByName(df_new_main, allowMissingColumns=True)
-    # Final Silver Conflicted = duplicates confirmed by similarity
     df_conflicted_final = df_conflicted_after
+
+    # Logging: Final counts
+    print(f"[{entity}] Final Silver Main: {df_main_final.count()}, Final Silver Conflicted: {df_conflicted_final.count()}")
 
     return df_main_final, df_conflicted_final
 
