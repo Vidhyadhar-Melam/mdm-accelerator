@@ -12,12 +12,14 @@
 #   - Order deduplication by updated_ts (latest wins)
 #   - Prevents reprocessing and inflated totals
 #   - Audit schema aligned with ingestion (12 fields)
+#   - Production-grade audit mapping: incoming_count = total processed,
+#     inserted_count = MAIN records, conflicted_count tracked separately
 
 import json, uuid
 from datetime import datetime
 from pyspark.sql import Window
 from pyspark.sql.functions import col, row_number, lit, current_timestamp, to_date
-from pyspark.sql.types import StructType, StructField, StringType, DoubleType, TimestampType, LongType
+from pyspark.sql.types import StructType, StructField, StringType, DoubleType, TimestampType, LongType, DateType
 
 # -------------------------------------------------------------
 # Load configs
@@ -42,7 +44,7 @@ def load_schema_from_config(schema_key, config):
     type_map = {
         "string": StringType(),
         "double": DoubleType(),
-        "date": TimestampType(),   # normalize dates to timestamp
+        "date": DateType(),          # align with ingestion
         "timestamp": TimestampType(),
         "long": LongType()
     }
@@ -96,7 +98,7 @@ def dedupe_source(src, run_id, error_records, lineage_records, checkpoint_update
         df_new = df_raw.filter(col("ingestion_ts") > last_run_ts) if last_run_ts else df_raw
         if df_new.count() == 0:
             print(f"No new records for {src['name']}_{src['entity']}")
-            return 0, 0, "SUCCESS", start_time, datetime.now(), 0.0, "NO_NEW"
+            return 0, 0, 0, "SUCCESS", start_time, datetime.now(), 0.0, "NO_NEW"
 
         # Deduplication keys (from sources.json)
         dedupe_keys = src.get("dedupe_keys", ["customer_id"])
@@ -149,14 +151,14 @@ def dedupe_source(src, run_id, error_records, lineage_records, checkpoint_update
             src["name"], src["entity"], max_ingestion_ts, run_id, end_time, env["environment"]
         ))
 
-        return int(df_main.count()), int(df_conflicted.count()), "SUCCESS", start_time, end_time, float((end_time - start_time).total_seconds()), "DEDUP"
+        return int(df_new.count()), int(df_main.count()), int(df_conflicted.count()), "SUCCESS", start_time, end_time, float((end_time - start_time).total_seconds()), "DEDUP"
 
     except Exception as e:
         print(f"Error deduping {src['name']}_{src['entity']}: {e}")
         error_records.append((
             run_id, f"{src['name']}_{src['entity']}", str(e), datetime.now(), env["environment"]
         ))
-        return 0, 0, "FAILED", datetime.now(), datetime.now(), 0.0, "FAILED"
+        return 0, 0, 0, "FAILED", datetime.now(), datetime.now(), 0.0, "FAILED"
 
 # -------------------------------------------------------------
 # Main Job
@@ -166,7 +168,7 @@ def main():
     job_name = "Raw-to-Bronze-Dedup"
     job_start = datetime.now()
 
-    new_main, new_conflicted = 0, 0
+    total_incoming, total_main, total_conflicted = 0, 0, 0
     audit_records, error_records, lineage_records, checkpoint_updates = [], [], [], []
     overall_status = "SUCCESS"
 
@@ -174,20 +176,17 @@ def main():
     # Process each source system/entity
     # -------------------------------------------------------------
     for src in sources:
-        main_count, conflicted_count, status, start_time, end_time, duration, load_type = dedupe_source(
+        incoming_count, main_count, conflicted_count, status, start_time, end_time, duration, load_type = dedupe_source(
             src, run_id, error_records, lineage_records, checkpoint_updates
         )
-        new_main += main_count
-        new_conflicted += conflicted_count
+        total_incoming += incoming_count
+        total_main += main_count
+        total_conflicted += conflicted_count
 
-        # If any source fails, mark overall job as FAILED
         if status == "FAILED":
             overall_status = "FAILED"
 
-        # Add audit record (12 fields to match schema)
-        # Schema fields: run_id, job_name, source_entity, start_time, end_time,
-        # duration, incoming_count, inserted_count, records_rejected,
-        # environment, status, load_type
+        # Audit record (production-grade mapping)
         audit_records.append((
             run_id, 
             job_name, 
@@ -195,9 +194,9 @@ def main():
             start_time, 
             end_time,
             float(duration), 
-            int(main_count),          # mapped to incoming_count
-            int(conflicted_count),    # mapped to inserted_count
-            0,                        # records_rejected always 0 for dedup
+            int(incoming_count),     # total rows processed for this source
+            int(main_count),         # MAIN records written to Bronze
+            int(conflicted_count),   # CONFLICTED records written to Bronze
             env["environment"], 
             status, 
             load_type
@@ -209,7 +208,6 @@ def main():
     job_end = datetime.now()
     job_duration = (job_end - job_start).total_seconds()
 
-    # Summary record also needs 12 fields
     audit_records.append((
         run_id, 
         job_name, 
@@ -217,9 +215,9 @@ def main():
         job_start, 
         job_end,
         float(job_duration), 
-        int(new_main),            # mapped to incoming_count
-        int(new_conflicted),      # mapped to inserted_count
-        0,                        # records_rejected
+        int(total_incoming),     # total rows processed across all sources
+        int(total_main),         # total MAIN records across all sources
+        int(total_conflicted),   # total CONFLICTED records across all sources
         env["environment"], 
         overall_status, 
         "SUMMARY"
@@ -271,7 +269,7 @@ def main():
     # Final output summary
     # -------------------------------------------------------------
     print(f"Deduplication complete. Run ID={run_id}")
-    print(f"New Main={new_main}, New Conflicted={new_conflicted}")
+    print(f"Incoming={total_incoming}, New Main={total_main}, New Conflicted={total_conflicted}")
     print(f"Total Main={total_main_records}, Total Conflicted={total_conflicted_records}")
     print(f"Status={overall_status}")
 
@@ -286,9 +284,5 @@ def main():
 # -------------------------------------------------------------
 # Entry Point
 # -------------------------------------------------------------
-# This triggers the deduplication job when the notebook is run.
-# It generates a new run_id, processes all sources defined in sources.json,
-# applies deduplication logic (latest record per key → Bronze MAIN, others → Bronze CONFLICTED),
-# writes audit logs, lineage, and checkpoints.
-# Filtering is based on ingestion_ts (stable), ordering is based on updated_ts (latest wins).
 main()
+
