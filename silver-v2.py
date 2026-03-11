@@ -44,7 +44,7 @@ def load_schema_from_config(schema_key, config):
     type_map = {
         "string": StringType(),
         "double": DoubleType(),
-        "date": StringType(),   # keep as string, cast later
+        "date": StringType(),
         "timestamp": TimestampType(),
         "long": LongType()
     }
@@ -53,29 +53,22 @@ def load_schema_from_config(schema_key, config):
     return StructType(struct_fields)
 
 # -------------------------------------------------------------
-# Similarity UDF (generic, 8 args)
+# Similarity UDF
 # -------------------------------------------------------------
-def multi_similarity(val1a, val1b, val2a, val2b, val3a, val3b, val4a, val4b):
-    """
-    Compute weighted similarity score between two records.
-    Generic function: can be used for names, emails, phones, account names, etc.
-    Weights are distributed equally unless tuned per entity.
-    """
+def multi_similarity(*args):
     score = 0
-    if val1a and val1b:
-        score += 0.25 * SequenceMatcher(None, str(val1a).lower(), str(val1b).lower()).ratio() * 100
-    if val2a and val2b:
-        score += 0.25 * SequenceMatcher(None, str(val2a).lower(), str(val2b).lower()).ratio() * 100
-    if val3a and val3b:
-        score += 0.25 * SequenceMatcher(None, str(val3a).lower(), str(val3b).lower()).ratio() * 100
-    if val4a and val4b:
-        score += 0.25 * SequenceMatcher(None, str(val4a).lower(), str(val4b).lower()).ratio() * 100
+    n = len(args) // 2
+    weight = 1.0 / n if n > 0 else 0
+    for i in range(n):
+        a, b = args[2*i], args[2*i+1]
+        if a and b:
+            score += weight * SequenceMatcher(None, str(a).lower(), str(b).lower()).ratio() * 100
     return score
-
 similarity_udf = udf(multi_similarity, DoubleType())
 
+
 # -------------------------------------------------------------
-# Entity-specific quality checks
+# Quality checks
 # -------------------------------------------------------------
 def apply_quality_checks(df, entity):
     if entity.lower() == "customer":
@@ -99,16 +92,16 @@ def apply_quality_checks(df, entity):
         return df
 
 # -------------------------------------------------------------
-# Helper: get similarity threshold from sources.json
+# Similarity threshold helper
 # -------------------------------------------------------------
 def get_similarity_threshold(entity, source_system):
     for src in sources:
         if src["entity"].lower() == entity.lower() and src["name"].lower() == source_system.lower():
             return src.get("similarity_threshold", 80)
-    return 80  # fallback if not found
+    return 80
 
 # -------------------------------------------------------------
-# Load all Bronze Main tables
+# Load Bronze Main
 # -------------------------------------------------------------
 def load_all_bronze_main():
     dfs = []
@@ -126,15 +119,14 @@ def load_all_bronze_main():
 # Deduplication per entity
 # -------------------------------------------------------------
 def dedup_entity(df, entity):
-    # Blocking + similarity expression setup (unchanged)
     if entity.lower() == "customer":
-        df = df.withColumn("norm_email", lower(col("email"))) \
-               .withColumn("norm_phone", regexp_replace(col("phone"), "[^0-9]", "")) \
-               .withColumn("blocking_email", col("norm_email")) \
-               .withColumn("blocking_phone", col("norm_phone").substr(1,5)) \
+        # Enterprise-grade blocking: DOB + name soundex + phone prefix
+        df = df.withColumn("norm_phone", regexp_replace(col("phone"), "[^0-9]", "")) \
+               .withColumn("blocking_dob", col("date_of_birth")) \
+               .withColumn("blocking_phone_prefix", col("norm_phone").substr(1,5)) \
                .withColumn("blocking_fname", soundex(col("first_name"))) \
                .withColumn("blocking_lname", soundex(col("last_name")))
-        partition_cols = ["blocking_email","blocking_phone","blocking_fname","blocking_lname"]
+        partition_cols = ["blocking_dob","blocking_phone_prefix","blocking_fname","blocking_lname"]
         sim_expr = similarity_udf(
             col("conf.first_name"), col("main.first_name"),
             col("conf.last_name"), col("main.last_name"),
@@ -142,33 +134,51 @@ def dedup_entity(df, entity):
             col("conf.phone"), col("main.phone")
         )
     elif entity.lower() == "account":
-        df = df.withColumn("blocking_account", soundex(col("account_name")))
-        partition_cols = ["blocking_account"]
+        df = df.withColumn("blocking_account", soundex(col("account_name")))\
+                .withColumn("blocking_group", col("account_group"))   # optional if region/country exists
+        partition_cols = ["blocking_account", "blocking_group"]
+        # Similarity: compare account name + type + industry
         sim_expr = similarity_udf(
             col("conf.account_name"), col("main.account_name"),
-            col("conf.account_id"), col("main.account_id"),
-            col("conf.source_system"), col("main.source_system"),
-            col("conf.created_ts"), col("main.created_ts")
+            col("conf.account_group"), col("main.account_group"),
+            col("conf.account_owner"), col("main.account_owner"),
+            col("conf.account_code"), col("main.account_code")
         )
     elif entity.lower() == "address":
         df = df.withColumn("blocking_postal", col("postal_code")) \
-               .withColumn("blocking_city", soundex(col("city")))
-        partition_cols = ["blocking_postal","blocking_city"]
+               .withColumn("blocking_city", soundex(col("city"))) \
+               .withColumn("blocking_state", col("state"))
+        partition_cols = ["blocking_postal","blocking_city","blocking_state"]
+        # Similarity: include differentiating fields beyond blocking keys
         sim_expr = similarity_udf(
             col("conf.city"), col("main.city"),
             col("conf.state"), col("main.state"),
             col("conf.postal_code"), col("main.postal_code"),
-            col("conf.address_id"), col("main.address_id")
+            col("conf.address_line1"), col("main.address_line1"),
+            col("conf.address_line2"), col("main.address_line2")
         )
     elif entity.lower() == "transactions":
-        df = df.withColumn("blocking_txn", col("transaction_id")) \
+        # Enterprise-grade blocking: amount + currency + date
+        df = df.withColumn("blocking_amount", col("amount")) \
+               .withColumn("blocking_currency", col("currency")) \
                .withColumn("blocking_date", to_date(col("transaction_date")))
-        partition_cols = ["blocking_txn","blocking_date"]
+        partition_cols = ["blocking_amount","blocking_currency","blocking_date"]
+        # Similarity: include differentiating fields beyond blocking keys
         sim_expr = similarity_udf(
-            col("conf.transaction_id"), col("main.transaction_id"),
-            col("conf.amount"), col("main.amount"),
-            col("conf.currency"), col("main.currency"),
-            col("conf.transaction_date"), col("main.transaction_date")
+            #col("conf.transaction_id"), col("main.merchant_name"),  #optional   
+            # col("conf.amount"), col("main.amount"),
+            # col("conf.currency"), col("main.currency"),
+            # col("conf.transaction_date"), col("main.transaction_date"),
+            col("conf.account_id"), col("main.account_id"),
+            col("conf.transaction_type"), col("main.transaction_type"),
+            col("conf.customer_id"), col("main.customer_id"),
+            col("conf.source_system"), col("main.source_system"),
+            # Optional extras — include only if present in your dataframe
+            col("conf.invoice_code"), col("main.invoice_code"),
+            col("conf.document_number"), col("main.document_number"),
+            col("conf.opportunity_id"), col("main.opportunity_id"),
+            col("conf.opportunity_stage"), col("main.opportunity_stage"),
+            col("conf.campaign_id"), col("main.campaign_id")
         )
     elif entity.lower() == "contacts":
         df = df.withColumn("blocking_contact", soundex(col("contact_value")))
@@ -182,17 +192,15 @@ def dedup_entity(df, entity):
     else:
         return df, spark.createDataFrame([], df.schema)
 
-        # Survivorship rules: prioritize Salesforce > ERP > CRM > SAP > others
+    # Survivorship rules: prioritize Salesforce > ERP > CRM > SAP > others
     priority_expr = when(col("source_system")=="Salesforce",1) \
                     .when(col("source_system")=="ERP",2) \
                     .when(col("source_system")=="CRM",3) \
                     .when(col("source_system")=="SAP",4) \
                     .otherwise(5)
 
-    # Window for survivorship: partition by blocking keys, order by source priority + recency
+    # Window for survivorship
     w = Window.partitionBy(*partition_cols).orderBy(priority_expr.asc(), col("created_ts").desc())
-
-    # Rank records within each block
     df_ranked = df.withColumn("rank", row_number().over(w))
     df_main = df_ranked.filter(col("rank")==1).drop("rank")       # survivor
     df_conflicted = df_ranked.filter(col("rank")>1).drop("rank")  # duplicates
@@ -200,14 +208,14 @@ def dedup_entity(df, entity):
     # Logging: Survivorship counts
     print(f"[{entity}] Survivorship -> Main count: {df_main.count()}, Conflicted count: {df_conflicted.count()}")
 
-    # Similarity check: compare conflicted vs main within same block
+    # Similarity check
     joined = df_conflicted.alias("conf").join(
         df_main.alias("main"),
         on=partition_cols, how="inner"
     )
     joined = joined.withColumn("similarity", sim_expr)
 
-    # Use entity-specific threshold from sources.json
+    # Threshold from sources.json
     source_system_val = df.select("source_system").first()[0]
     threshold = get_similarity_threshold(entity, source_system_val)
 
@@ -219,15 +227,13 @@ def dedup_entity(df, entity):
           f"Conflicted after: {df_conflicted_after.count()}, "
           f"Promoted to Main: {df_new_main.count()}")
 
-    # Final Silver Main = original survivors + new mains promoted by similarity
+    # Final Silver sets
     df_main_final = df_main.unionByName(df_new_main, allowMissingColumns=True)
     df_conflicted_final = df_conflicted_after
 
-    # Logging: Final counts
     print(f"[{entity}] Final Silver Main: {df_main_final.count()}, Final Silver Conflicted: {df_conflicted_final.count()}")
 
     return df_main_final, df_conflicted_final
-
 
 # -------------------------------------------------------------
 # Global Silver Dedup + Survivorship + Similarity
@@ -243,7 +249,6 @@ def global_silver(run_id):
 
     print("After quality checks:", df_all.count())
 
-    # Process each entity separately
     entities = ["customer","account","address","transactions","contacts"]
     silver_main_union = None
     silver_conflicted_union = None
@@ -264,17 +269,14 @@ def global_silver(run_id):
     print("Silver Main count (after similarity):", silver_main_union.count())
     print("Silver Conflicted count (after similarity):", silver_conflicted_union.count())
 
-    # Write outputs to Delta tables
+    # Write Silver outputs
     silver_main_path = f"{paths['silver_main']}/global"
     silver_conflicted_path = f"{paths['silver_conflicted']}/global"
 
-    silver_main_union.write.format("delta").mode("overwrite").option("mergeSchema","true") \
-        .partitionBy("source_system").save(silver_main_path)
-    silver_conflicted_union.write.format("delta").mode("overwrite").option("mergeSchema","true") \
-        .partitionBy("source_system").save(silver_conflicted_path)
+    silver_main_union.write.format("delta").mode("overwrite").option("mergeSchema","true").save(silver_main_path)
+    silver_conflicted_union.write.format("delta").mode("overwrite").option("mergeSchema","true").save(silver_conflicted_path)
 
     return df_all.count(), silver_main_union.count(), silver_conflicted_union.count(), silver_main_path
-
 
 # -------------------------------------------------------------
 # Entry Point
@@ -295,8 +297,9 @@ def main():
     audit_schema = load_schema_from_config("audit", schema_config)
     lineage_schema = load_schema_from_config("lineage", schema_config)
 
-    audit_data = [(run_id, job_name, "GLOBAL", job_start, job_end, job_duration,
-                   clean_count, conflicted_count, env["environment"], "SUCCESS", "GLOBAL_SURVIVORSHIP+SIMILARITY")]
+    audit_data = [(run_id, job_name, "GLOBAL", job_start, job_end, float(job_duration),
+                   int(total_count), int(clean_count), int(conflicted_count),
+                   env["environment"], "SUCCESS", "GLOBAL_SURVIVORSHIP+SIMILARITY")]
 
     audit_df = spark.createDataFrame(audit_data, schema=audit_schema)
     audit_df.write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_runs"])
@@ -310,7 +313,6 @@ def main():
     # ---------------- Validation ----------------
     display(spark.read.format("delta").load(paths["audit_runs"]))
     display(spark.read.format("delta").load(paths["audit_lineage"]))
-
 
 # -------------------------------------------------------------
 # Entry Point Trigger
