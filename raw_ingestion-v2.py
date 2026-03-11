@@ -140,13 +140,13 @@ def ingest_source(src, run_id, error_records, lineage_records, dq_records):
 
         # Lineage
         end_time = datetime.now()
-        lineage_records.append((run_id, f"{src['name']}_{src['entity']}", src["path"], raw_path,
+        lineage_records.append((run_id, src["name"], src["path"], raw_path,
                                 start_time, end_time, env["environment"], load_type))
 
         return incoming_count, inserted_count, 0, "SUCCESS", start_time, end_time, (end_time - start_time).total_seconds(), load_type
 
     except Exception as e:
-        error_records.append((run_id, f"{src['name']}_{src['entity']}", str(e), datetime.now(), env["environment"]))
+        error_records.append((run_id, src["name"], str(e), datetime.now(), env["environment"]))
         return 0, 0, 0, "FAILED", datetime.now(), datetime.now(), 0.0, "FAILED"
 
 # -------------------------------------------------------------
