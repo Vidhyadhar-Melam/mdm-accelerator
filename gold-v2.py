@@ -1,18 +1,19 @@
 # -------------------------------------------------------------
-# Gold Layer – Single Source of Truth
+# Gold Layer – Single Source of Truth (SSOT) with Ingestion Date Partitioning
 # -------------------------------------------------------------
 # Purpose:
 #   - Read Silver Main + Silver Conflicted records
 #   - Apply business-driven deduplication rules
 #   - Collapse duplicates into one "golden record" per entity
 #   - Enforce single source of truth (SSOT)
-#   - Write Gold outputs per entity
+#   - Write Gold outputs per entity, partitioned by ingestion_date
 #   - Log audit + lineage for traceability
+#   - Audit schema aligned with ingestion/deduplication (12 fields)
 # -------------------------------------------------------------
 
 import json, uuid
 from datetime import datetime
-from pyspark.sql.functions import col, first, max
+from pyspark.sql.functions import col, first, max, lit
 from pyspark.sql.types import StructType, StructField, StringType, TimestampType, LongType, DoubleType
 
 # -------------------------------------------------------------
@@ -33,7 +34,7 @@ def load_schema_from_config(schema_key, config):
     type_map = {
         "string": StringType(),
         "double": DoubleType(),
-        "date": StringType(),
+        "date": StringType(),   # keep as string, cast later
         "timestamp": TimestampType(),
         "long": LongType()
     }
@@ -54,7 +55,6 @@ def load_schema_from_config(schema_key, config):
 
 def dedup_gold(df, entity):
     if entity == "customer":
-        # Collapse by phone number
         return df.groupBy("phone").agg(
             first("customer_id").alias("customer_id"),
             first("first_name").alias("first_name"),
@@ -116,11 +116,17 @@ def global_gold(run_id):
     gold_union = None
     summary_list = []
 
+    # Add ingestion_date column (YYYY-MM-DD) for partitioning
+    ingestion_date = datetime.now().strftime("%Y-%m-%d")
+
     for ent in entities:
         df_entity = df_all.filter(col("entity")==ent)
         if df_entity.count() == 0:
             continue
         df_gold = dedup_gold(df_entity, ent)
+
+        # Add ingestion_date column to each entity dataframe
+        df_gold = df_gold.withColumn("ingestion_date", lit(ingestion_date))
 
         summary_list.append({
             "entity": ent,
@@ -128,9 +134,10 @@ def global_gold(run_id):
             "gold_output": df_gold.count()
         })
 
+        # Write Gold output partitioned by ingestion_date
         gold_path = f"{paths['gold']}/{ent}"
         df_gold.write.format("delta").mode("overwrite").option("mergeSchema","true") \
-            .partitionBy("source_system").save(gold_path)
+            .partitionBy("ingestion_date").save(gold_path)
 
         if gold_union is None:
             gold_union = df_gold
@@ -164,8 +171,8 @@ def main():
     audit_schema = load_schema_from_config("audit", schema_config)
     lineage_schema = load_schema_from_config("lineage", schema_config)
 
-    audit_data = [(run_id, job_name, "GLOBAL", job_start, job_end, job_duration,
-                   gold_count, 0, env["environment"], "SUCCESS", "GLOBAL_GOLD_SSOT")]
+    audit_data = [(run_id, job_name, "GLOBAL", job_start, job_end, float(job_duration),
+                   int(gold_count), int(gold_count), 0, env["environment"], "SUCCESS", "GLOBAL_GOLD_SSOT")]
 
     audit_df = spark.createDataFrame(audit_data, schema=audit_schema)
     audit_df.write.format("delta").mode("append").option("mergeSchema","true").save(paths["audit_runs"])
