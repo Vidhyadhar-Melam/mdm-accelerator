@@ -10,13 +10,14 @@ from pyspark.sql.types import StructType, StructField, StringType, TimestampType
 # -------------------------------------------------------------
 # Load Configs
 # -------------------------------------------------------------
-paths_path   = "s3://databricks-amz-s3-bucket/mdm-accelerator/config-v2/paths.json"
-env_path     = "s3://databricks-amz-s3-bucket/mdm-accelerator/config-v2/environment.json"
-schema_config_path = "s3://databricks-amz-s3-bucket/mdm-accelerator/config-v2/schemas.json"
+master_config_path = "s3://databricks-amz-s3-bucket/mdm-accelerator/config-v2/config.json"
+master_config = json.loads(dbutils.fs.head(master_config_path, 10000))
 
-paths   = json.loads(dbutils.fs.head(paths_path, 100000))
-env     = json.loads(dbutils.fs.head(env_path, 100000))
-schema_config = json.loads(dbutils.fs.head(schema_config_path, 100000))
+paths         = json.loads(dbutils.fs.head(master_config["paths_path"], 100000))
+env           = json.loads(dbutils.fs.head(master_config["env_path"], 100000))
+schema_config = json.loads(dbutils.fs.head(master_config["schema_config_path"], 100000))
+connections   = json.loads(dbutils.fs.head(master_config["connections_path"], 100000))
+sources       = json.loads(dbutils.fs.head(master_config["sources_path"], 100000))["sources"]
 
 # -------------------------------------------------------------
 # Dynamic schema loader
@@ -107,7 +108,7 @@ def global_gold(run_id):
     print("Silver Conflicted count:", silver_conflicted_df.count())
     print("Total records entering Gold:", df_all.count())
 
-    entities = ["customer","account","address","transactions","contacts"]
+    entities = list({src["entity"].lower() for src in sources})
     gold_union = None
     summary_list = []
     ingestion_date = datetime.now().strftime("%Y-%m-%d")
