@@ -24,15 +24,17 @@ from pyspark.sql.types import StructType, StructField, StringType, DoubleType, T
 # -------------------------------------------------------------
 # Load configs
 # -------------------------------------------------------------
-sources_path = "s3://databricks-amz-s3-bucket/mdm-accelerator/config-v2/sources.json"
-paths_path   = "s3://databricks-amz-s3-bucket/mdm-accelerator/config-v2/paths.json"
-env_path     = "s3://databricks-amz-s3-bucket/mdm-accelerator/config-v2/environment.json"
-schema_config_path = "s3://databricks-amz-s3-bucket/mdm-accelerator/config-v2/schemas.json"
+# Load master config.json
+master_config_path = "s3://databricks-amz-s3-bucket/mdm-accelerator/config-v2/config.json"
+master_config = json.loads(dbutils.fs.head(master_config_path, 10000))
 
-sources = json.loads(dbutils.fs.head(sources_path, 100000))["sources"]
-paths   = json.loads(dbutils.fs.head(paths_path, 100000))
-env     = json.loads(dbutils.fs.head(env_path, 100000))
-schema_config = json.loads(dbutils.fs.head(schema_config_path, 100000))
+sources        = json.loads(dbutils.fs.head(master_config["sources_path"], 100000))["sources"]
+paths          = json.loads(dbutils.fs.head(master_config["paths_path"], 100000))
+env            = json.loads(dbutils.fs.head(master_config["env_path"], 100000))
+schema_config  = json.loads(dbutils.fs.head(master_config["schema_config_path"], 100000))
+connections    = json.loads(dbutils.fs.head(master_config["connections_path"], 100000))
+
+
 
 # Reset mode flag (true = full rebuild, false = incremental)
 reset_mode = env.get("reset_mode", False)
