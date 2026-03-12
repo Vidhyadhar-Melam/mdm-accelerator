@@ -27,15 +27,15 @@ from pyspark.sql.functions import udf
 # -------------------------------------------------------------
 # Load Configs
 # -------------------------------------------------------------
-sources_path = "s3://databricks-amz-s3-bucket/mdm-accelerator/config-v2/sources.json"
-paths_path   = "s3://databricks-amz-s3-bucket/mdm-accelerator/config-v2/paths.json"
-env_path     = "s3://databricks-amz-s3-bucket/mdm-accelerator/config-v2/environment.json"
-schema_config_path = "s3://databricks-amz-s3-bucket/mdm-accelerator/config-v2/schemas.json"
+# Load master config.json
+master_config_path = "s3://databricks-amz-s3-bucket/mdm-accelerator/config-v2/config.json"
+master_config = json.loads(dbutils.fs.head(master_config_path, 10000))
 
-sources = json.loads(dbutils.fs.head(sources_path, 100000))["sources"]
-paths   = json.loads(dbutils.fs.head(paths_path, 100000))
-env     = json.loads(dbutils.fs.head(env_path, 100000))
-schema_config = json.loads(dbutils.fs.head(schema_config_path, 100000))
+sources        = json.loads(dbutils.fs.head(master_config["sources_path"], 100000))["sources"]
+paths          = json.loads(dbutils.fs.head(master_config["paths_path"], 100000))
+env            = json.loads(dbutils.fs.head(master_config["env_path"], 100000))
+schema_config  = json.loads(dbutils.fs.head(master_config["schema_config_path"], 100000))
+connections    = json.loads(dbutils.fs.head(master_config["connections_path"], 100000))
 
 # -------------------------------------------------------------
 # Dynamic schema loader
@@ -51,6 +51,24 @@ def load_schema_from_config(schema_key, config):
     fields = config["schemas"][schema_key]["fields"]
     struct_fields = [StructField(f["name"], type_map[f["type"]], True) for f in fields]
     return StructType(struct_fields)
+
+# -------------------------------------------------------------
+# Helper: Load all Bronze Main entities (system + entity)
+# -------------------------------------------------------------
+def load_all_bronze_main():
+    df_union = None
+    for src in sources:   # dynamically loop through all sources from config
+        sys = src["name"].lower()
+        ent = src["entity"].lower()
+        bronze_path = f"{paths['bronze_main']}/{sys}/{ent}"
+        try:
+            df_ent = spark.read.format("delta").load(bronze_path) \
+                               .withColumn("entity", lit(ent)) \
+                               .withColumn("source_system", lit(sys))
+            df_union = df_ent if df_union is None else df_union.unionByName(df_ent, allowMissingColumns=True)
+        except Exception:
+            print(f"Skipping missing path: {bronze_path}")
+    return df_union
 
 # -------------------------------------------------------------
 # Similarity UDF
