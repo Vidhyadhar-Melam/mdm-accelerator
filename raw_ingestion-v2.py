@@ -10,6 +10,7 @@
 #   - Audit, Error, Lineage, DQ logging
 #   - Column normalization (lowercase + trim) to fix MERGE mismatches
 #   - Audit logs now record both Incoming Rows and Inserted Rows
+#   - NEW: Generic ingestion using connections.json (file, jdbc, api, stream)
 
 import json, uuid
 from datetime import datetime
@@ -21,15 +22,15 @@ from delta.tables import DeltaTable
 # -------------------------------------------------------------
 # Load configs
 # -------------------------------------------------------------
-sources_path = "s3://databricks-amz-s3-bucket/mdm-accelerator/config-v2/sources.json"
-paths_path   = "s3://databricks-amz-s3-bucket/mdm-accelerator/config-v2/paths.json"
-env_path     = "s3://databricks-amz-s3-bucket/mdm-accelerator/config-v2/environment.json"
-schema_config_path = "s3://databricks-amz-s3-bucket/mdm-accelerator/config-v2/schemas.json"
+# Load master config.json
+master_config_path = "s3://databricks-amz-s3-bucket/mdm-accelerator/config-v2/config.json"
+master_config = json.loads(dbutils.fs.head(master_config_path, 10000))
 
-sources = json.loads(dbutils.fs.head(sources_path, 100000))["sources"]
-paths   = json.loads(dbutils.fs.head(paths_path, 100000))
-env     = json.loads(dbutils.fs.head(env_path, 100000))
-schema_config = json.loads(dbutils.fs.head(schema_config_path, 100000))
+sources        = json.loads(dbutils.fs.head(master_config["sources_path"], 100000))["sources"]
+paths          = json.loads(dbutils.fs.head(master_config["paths_path"], 100000))
+env            = json.loads(dbutils.fs.head(master_config["env_path"], 100000))
+schema_config  = json.loads(dbutils.fs.head(master_config["schema_config_path"], 100000))
+connections    = json.loads(dbutils.fs.head(master_config["connections_path"], 100000))
 
 reset_mode = env.get("reset_mode", False)
 
@@ -49,7 +50,14 @@ def load_schema_from_config(schema_key, config):
     return StructType(struct_fields)
 
 # -------------------------------------------------------------
-# Ingest function
+# Helper: Secret fetcher (NEW placeholder)
+# -------------------------------------------------------------
+def get_secret(secret_key):
+    # In production, integrate with Databricks Secrets / AWS Secrets Manager / Azure Key Vault
+    return "DUMMY_SECRET"
+
+# -------------------------------------------------------------
+# Ingest function (UPDATED for generic connections)
 # -------------------------------------------------------------
 def ingest_source(src, run_id, error_records, lineage_records, dq_records):
     try:
@@ -57,10 +65,43 @@ def ingest_source(src, run_id, error_records, lineage_records, dq_records):
         schema_key = f"{src['name'].lower()}_{src['entity'].lower()}"
         expected_schema = load_schema_from_config(schema_key, schema_config)
 
-        # Read CSV
-        df_new = spark.read.option("header", "true").option("delimiter", ",").csv(src["path"])
+        # -----------------------------------------------------
+        # Generic ingestion based on connections.json
+        # -----------------------------------------------------
+        system = src["name"].lower()
+        conn_cfg = connections.get(system)
 
+        if conn_cfg and conn_cfg["type"] == "file":
+            # File-based ingestion (CSV on S3)
+            df_new = spark.read.format(conn_cfg["format"]) \
+                .options(**conn_cfg["options"]) \
+                .load(src["path"])
+
+        elif conn_cfg and conn_cfg["type"] == "jdbc":
+            # JDBC ingestion (SQL Server, MySQL, etc.)
+            df_new = spark.read.format("jdbc") \
+                .option("url", conn_cfg["url"]) \
+                .option("dbtable", src["entity"]) \
+                .option("user", conn_cfg["user"]) \
+                .option("password", get_secret(conn_cfg["secret"])) \
+                .option("driver", conn_cfg["driver"]) \
+                .load()
+
+        elif conn_cfg and conn_cfg["type"] == "api":
+            # Placeholder for API ingestion
+            raise Exception("API ingestion not yet implemented")
+
+        elif conn_cfg and conn_cfg["type"] == "stream":
+            # Placeholder for streaming ingestion (Kafka, etc.)
+            raise Exception("Streaming ingestion not yet implemented")
+
+        else:
+            # Default: fallback to CSV read (legacy)
+            df_new = spark.read.option("header", "true").option("delimiter", ",").csv(src["path"])
+
+        # -----------------------------------------------------
         # Normalize column names (lowercase + trim)
+        # -----------------------------------------------------
         df_new = df_new.toDF(*[c.strip().lower() for c in df_new.columns])
 
         # Cast + normalize values
@@ -150,7 +191,7 @@ def ingest_source(src, run_id, error_records, lineage_records, dq_records):
         return 0, 0, 0, "FAILED", datetime.now(), datetime.now(), 0.0, "FAILED"
 
 # -------------------------------------------------------------
-# Main Job
+# Main Job (unchanged, still loops through sources.json)
 # -------------------------------------------------------------
 def main():
     run_id = str(uuid.uuid4())
@@ -161,6 +202,9 @@ def main():
     audit_records, error_records, lineage_records, dq_records = [], [], [], []
     overall_status = "SUCCESS"
 
+    # Loop through all sources defined in sources.json
+    # Each source system (CRM, ERP, Salesforce, SAP, plus future JDBC/API/Stream)
+    # will be ingested using connections.json
     for src in sources:
         incoming, inserted, rejected, status, start_time, end_time, duration, load_type = ingest_source(
             src, run_id, error_records, lineage_records, dq_records
